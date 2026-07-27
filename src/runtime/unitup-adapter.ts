@@ -95,10 +95,12 @@ export class UnitupAdapter implements RuntimeManager {
         mainPid: Number.isNaN(parsedPid!) ? undefined : parsedPid,
         restartCount: Number.isNaN(parsedRestarts!) ? undefined : parsedRestarts,
       };
-    } catch (err: any) {
-      throw new RuntimeError(
-        `Unitup failed to fetch status for service '${service}': ${err.message}`,
-      );
+    } catch {
+      return {
+        service,
+        active: false,
+        subState: 'inactive',
+      };
     }
   }
 }
