@@ -1,0 +1,15 @@
+src/
+test/
+.github/
+.vscode/
+.idea/
+*.db
+*.log
+tsup.config.ts
+tsconfig.json
+vitest.config.ts
+biome.json
+gitship.config.yaml
+gitship.config.yml
+gitship.config.json
+.DS_Store
