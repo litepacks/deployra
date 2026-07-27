@@ -99,8 +99,6 @@ export class UnitupAdapter implements RuntimeManager {
         ...entry,
         memoryMax: options?.memoryMax,
         memoryHigh: options?.memoryHigh,
-        cpuQuota: options?.cpuQuota,
-        restartSec: options?.restartSec,
         start: true,
         force: true,
       });
