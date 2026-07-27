@@ -58,4 +58,22 @@ describe('Config Schema Validation', () => {
 
     expect(() => normalizeAndValidateConfig(raw)).toThrow(ConfigValidationError);
   });
+
+  it('normalizes strategy in-place as default and strategy isolated with custom workspacePath', () => {
+    const defaultNorm = normalizeAndValidateConfig({
+      project: { name: 'app1', path: '/app1' },
+    });
+    expect(defaultNorm.deploy.strategy).toBe('in-place');
+    expect(defaultNorm.deploy.workspacePath).toContain('.gitship/workspaces/app1');
+
+    const isolatedNorm = normalizeAndValidateConfig({
+      project: { name: 'app2', path: '/app2' },
+      deploy: {
+        strategy: 'isolated',
+        workspacePath: '/tmp/custom-workspace',
+      },
+    });
+    expect(isolatedNorm.deploy.strategy).toBe('isolated');
+    expect(isolatedNorm.deploy.workspacePath).toBe('/tmp/custom-workspace');
+  });
 });

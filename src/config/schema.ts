@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { z } from 'zod';
 import { parseDurationMs } from './duration.js';
 import { ConfigValidationError } from '../errors/gitship-error.js';
@@ -66,6 +67,8 @@ export const gitshipConfigSchema = z.object({
     .default({ interval: '30s' }),
   deploy: z
     .object({
+      strategy: z.enum(['in-place', 'isolated']).default('in-place'),
+      workspacePath: z.string().optional(),
       concurrency: z.number().int().min(1).default(1),
       queueMode: z.enum(['latest', 'fifo', 'reject']).default('latest'),
       dirtyWorkspace: z.enum(['reject', 'reset', 'stash']).default('reject'),
@@ -86,6 +89,10 @@ export const gitshipConfigSchema = z.object({
         .object({
           name: z.string(),
           action: z.enum(['start', 'restart', 'reload', 'none']).default('restart'),
+          memoryMax: z.string().optional(),
+          memoryHigh: z.string().optional(),
+          cpuQuota: z.string().optional(),
+          restartSec: z.string().optional(),
         })
         .optional(),
       ready: z
@@ -153,6 +160,12 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedGitshi
     }
   }
 
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp';
+  const defaultWorkspacePath = path.join(homeDir, '.gitship/workspaces', data.project.name);
+  const resolvedWorkspacePath = data.deploy.workspacePath
+    ? path.resolve(data.deploy.workspacePath)
+    : defaultWorkspacePath;
+
   return {
     project: {
       name: data.project.name,
@@ -166,6 +179,8 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedGitshi
       intervalMs: watchIntervalMs,
     },
     deploy: {
+      strategy: data.deploy.strategy,
+      workspacePath: resolvedWorkspacePath,
       concurrency: data.deploy.concurrency,
       queueMode: data.deploy.queueMode,
       dirtyWorkspace: data.deploy.dirtyWorkspace,
@@ -181,6 +196,10 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedGitshi
       service: {
         name: serviceName,
         action: serviceAction,
+        memoryMax: data.deploy.service?.memoryMax,
+        memoryHigh: data.deploy.service?.memoryHigh,
+        cpuQuota: data.deploy.service?.cpuQuota,
+        restartSec: data.deploy.service?.restartSec,
       },
       ready: {
         timeoutMs: readyTimeoutMs,

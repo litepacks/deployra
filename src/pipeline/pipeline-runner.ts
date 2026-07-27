@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { GitClient } from '../git/git-client.js';
 import { UnitupAdapter } from '../runtime/unitup-adapter.js';
 import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
@@ -33,7 +35,8 @@ export class DeploymentPipelineRunner {
     }
 
     const config = project.config;
-    const projectPath = project.path;
+    const isIsolated = config.deploy.strategy === 'isolated';
+    const workingDir = isIsolated ? config.deploy.workspacePath : project.path;
     let lockAcquired = false;
 
     this.deploymentRepo.updateStatus(deploymentId, 'running');
@@ -49,32 +52,53 @@ export class DeploymentPipelineRunner {
 
       // Step 2: validate-repository
       await this.runStep(deploymentId, 'validate-repository', async () => {
-        await this.gitClient.validateRepository(projectPath, config.source.remote);
+        if (isIsolated) {
+          if (!fs.existsSync(workingDir)) {
+            fs.mkdirSync(workingDir, { recursive: true });
+          }
+          if (!fs.existsSync(path.join(workingDir, '.git'))) {
+            const remoteUrlResult = await safeExec(
+              'git',
+              ['remote', 'get-url', config.source.remote],
+              {
+                cwd: project.path,
+              },
+            );
+            const remoteUrl = remoteUrlResult.stdout.trim();
 
-        const dirty = await this.gitClient.isDirty(projectPath);
+            await safeExec('git', ['init'], { cwd: workingDir });
+            await safeExec('git', ['remote', 'add', config.source.remote, remoteUrl], {
+              cwd: workingDir,
+            });
+          }
+        }
+
+        await this.gitClient.validateRepository(workingDir, config.source.remote);
+
+        const dirty = await this.gitClient.isDirty(workingDir);
         if (dirty) {
           if (config.deploy.dirtyWorkspace === 'reject') {
             throw new GitshipError(
-              `Repository at '${projectPath}' has uncommitted changes (dirtyWorkspace: reject)`,
+              `Repository at '${workingDir}' has uncommitted changes (dirtyWorkspace: reject)`,
             );
           } else if (config.deploy.dirtyWorkspace === 'reset') {
-            await this.gitClient.resetHard(projectPath, 'HEAD');
-            await this.gitClient.cleanUntracked(projectPath);
+            await this.gitClient.resetHard(workingDir, 'HEAD');
+            await this.gitClient.cleanUntracked(workingDir);
           } else if (config.deploy.dirtyWorkspace === 'stash') {
-            await this.gitClient.stashChanges(projectPath);
+            await this.gitClient.stashChanges(workingDir);
           }
         }
       });
 
       // Step 3: fetch
       await this.runStep(deploymentId, 'fetch', async () => {
-        await this.gitClient.fetchBranch(projectPath, config.source.remote, config.source.branch);
+        await this.gitClient.fetchBranch(workingDir, config.source.remote, config.source.branch);
       });
 
       // Step 4: resolve-target
       await this.runStep(deploymentId, 'resolve-target', async () => {
         const resolvedHead = await this.gitClient.checkRemoteHead(
-          projectPath,
+          workingDir,
           config.source.remote,
           config.source.branch,
         );
@@ -87,20 +111,31 @@ export class DeploymentPipelineRunner {
 
       // Step 5: prepare
       await this.runStep(deploymentId, 'prepare', async () => {
-        await this.gitClient.resetHard(projectPath, targetSha);
+        await this.gitClient.resetHard(workingDir, targetSha);
       });
 
       // Step 6: install (with command retry if configured)
       await this.runStep(deploymentId, 'install', async () => {
         for (const cmdStr of config.deploy.commands.install) {
-          await this.executeCommandWithRetry(cmdStr, projectPath, config.deploy.retry);
+          await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry);
         }
       });
 
       // Step 7: build
       await this.runStep(deploymentId, 'build', async () => {
         for (const cmdStr of config.deploy.commands.build) {
-          await this.executeCommandWithRetry(cmdStr, projectPath, config.deploy.retry);
+          await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry);
+        }
+
+        if (isIsolated) {
+          logger.info(
+            `Syncing built artifacts from isolated workspace '${workingDir}' to target '${project.path}'`,
+            {
+              project: projectName,
+              deploymentId,
+            },
+          );
+          await this.syncIsolatedWorkspace(workingDir, project.path);
         }
       });
 
@@ -153,7 +188,7 @@ export class DeploymentPipelineRunner {
           this.deploymentRepo.updateStatus(deploymentId, 'rolling_back');
           await this.rollbackManager.rollback({
             projectName,
-            projectPath,
+            projectPath: project.path,
             previousSuccessfulSha: prevSha,
             config,
           });
@@ -239,5 +274,26 @@ export class DeploymentPipelineRunner {
       }
     }
     throw lastErr;
+  }
+
+  private async syncIsolatedWorkspace(sourceDir: string, targetDir: string): Promise<void> {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    try {
+      await safeExec('rsync', [
+        '-av',
+        '--delete',
+        '--exclude=.git',
+        `${sourceDir}/`,
+        `${targetDir}/`,
+      ]);
+    } catch {
+      fs.cpSync(sourceDir, targetDir, {
+        recursive: true,
+        force: true,
+        filter: (src) => !src.includes('/.git'),
+      });
+    }
   }
 }

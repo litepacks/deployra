@@ -1,3 +1,4 @@
+export type DeployStrategy = 'in-place' | 'isolated';
 export type QueueMode = 'latest' | 'fifo' | 'reject';
 export type DirtyWorkspaceMode = 'reject' | 'reset' | 'stash';
 export type ServiceAction = 'start' | 'restart' | 'reload' | 'none';
@@ -70,9 +71,15 @@ export interface DeployCommandsConfig {
 export interface DeployServiceConfig {
   name: string;
   action?: ServiceAction; // Default 'restart'
+  memoryMax?: string; // e.g. '512M', '1G'
+  memoryHigh?: string; // e.g. '400M'
+  cpuQuota?: string; // e.g. '50%'
+  restartSec?: string; // e.g. '5s'
 }
 
 export interface DeployConfig {
+  strategy?: DeployStrategy; // Default 'in-place'
+  workspacePath?: string;
   concurrency?: number; // Default 1
   queueMode?: QueueMode; // Default 'latest'
   dirtyWorkspace?: DirtyWorkspaceMode; // Default 'reject'
@@ -119,6 +126,8 @@ export interface NormalizedGitshipConfig {
     intervalMs: number;
   };
   deploy: {
+    strategy: DeployStrategy;
+    workspacePath: string;
     concurrency: number;
     queueMode: QueueMode;
     dirtyWorkspace: DirtyWorkspaceMode;
@@ -134,6 +143,10 @@ export interface NormalizedGitshipConfig {
     service: {
       name: string;
       action: ServiceAction;
+      memoryMax?: string;
+      memoryHigh?: string;
+      cpuQuota?: string;
+      restartSec?: string;
     };
     ready: {
       timeoutMs: number;

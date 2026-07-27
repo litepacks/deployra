@@ -1,8 +1,8 @@
 # Gitship 🚢
 
-Lightweight, platform-independent VPS deployment orchestrator.
+Lightweight, platform-independent & language-agnostic VPS deployment orchestrator.
 
-Gitship automatically monitors remote Git repositories, queues background deployments via an embedded execution engine (**Workmatic**), manages systemd service lifecycles via **Unitup**, verifies application post-deploy readiness via **Ready-checker**, and executes automated rollbacks on failure.
+Gitship is 100% language and framework independent. Whether your application is built with **Node.js, Go, Python, Rust, PHP, Java, Ruby, Docker binaries, or static HTML**, Gitship automatically monitors remote Git repositories, queues background deployments via an embedded execution engine (**Workmatic**), manages systemd service lifecycles via **Unitup**, verifies application post-deploy readiness via **Ready-checker**, and executes automated rollbacks on failure.
 
 ---
 
@@ -27,6 +27,7 @@ Readiness verification
 
 ## Features
 
+- 🌐 **Language & Framework Agnostic**: Deploys any stack (Node.js, Go, Python, Rust, PHP, Java, Docker, Static HTML) without language-specific plugins.
 - 🔄 **Provider-Independent Polling**: Uses lightweight `git ls-remote` for remote SHA change detection.
 - ⚡ **Workmatic Engine Integration**: Persistent background job queue with concurrency locks (`1` per project by default) and configurable queue modes (`latest`, `fifo`, `reject`).
 - 🛠 **Systemd Service Management**: Zero-downtime service restart and reload powered by Unitup.
@@ -92,6 +93,8 @@ deploy:
   service:
     name: api
     action: restart
+    memoryMax: 512M
+    cpuQuota: 50%
 
   ready:
     url: http://127.0.0.1:3000/health
@@ -161,6 +164,8 @@ gitship watch
 - `interval` (duration, default: `30s`): Polling interval (`500ms`, `30s`, `5m`, `1h`).
 
 ### `deploy`
+- `strategy` (`in-place` \| `isolated`, default: `in-place`): Deployment execution strategy (`in-place` builds directly in `project.path`; `isolated` builds inside an isolated workspace before syncing).
+- `workspacePath` (string, optional): Custom workspace directory for `isolated` strategy (defaults to `~/.gitship/workspaces/<project>`).
 - `concurrency` (number, default: `1`): Max concurrent deployments for project.
 - `queueMode` (`latest` \| `fifo` \| `reject`, default: `latest`): Queue behavior when new commit arrives during active deployment.
 - `dirtyWorkspace` (`reject` \| `reset` \| `stash`, default: `reject`): Action when working tree has uncommitted local changes.
@@ -171,6 +176,10 @@ gitship watch
 - `commands.build` (array of strings): Build commands executed sequentially.
 - `service.name` (string): Service name managed via Unitup systemd manager.
 - `service.action` (`start` \| `restart` \| `reload` \| `none`, default: `restart`): Action performed post-build.
+- `service.memoryMax` (string, optional): Systemd hard memory limit (e.g. `512M`, `1G`).
+- `service.memoryHigh` (string, optional): Systemd soft memory throttling limit (e.g. `400M`).
+- `service.cpuQuota` (string, optional): Systemd CPU quota limit (e.g. `50%`).
+- `service.restartSec` (string, optional): Systemd restart delay (e.g. `5s`).
 - `ready.url` (string, optional): Shorthand HTTP readiness check URL.
 - `ready.timeout` (duration, default: `45s`): Readiness check timeout.
 - `ready.interval` (duration, default: `2s`): Readiness check retry interval.
