@@ -207,4 +207,109 @@ describe('Deployra End-to-End (E2E) Pipeline', () => {
     expect(targetAppContent).toBe('console.log("v1.0.0");');
     expect(targetBuildSh).toBe('echo "Build OK"');
   }, 20000);
+
+  it('deploys a Node.js web server app with live HTTP health checks on commit update', async () => {
+    const http = await import('node:http');
+    const projRepo = new ProjectRepository();
+    const depRepo = new DeploymentRepository();
+
+    // 1. Create a live Node.js HTTP health server on port 3998
+    let serverVersion = 'v1.0.0';
+    const server = http.createServer((req, res) => {
+      if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(`OK ${serverVersion}`);
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(`Hello Node App ${serverVersion}`);
+      }
+    });
+
+    await new Promise<void>((resolve) => server.listen(3998, '127.0.0.1', resolve));
+
+    try {
+      // 2. Register project with HTTP readiness check
+      const config = normalizeAndValidateConfig({
+        project: {
+          name: 'node-web-app',
+          path: targetPath,
+        },
+        source: {
+          remote: 'origin',
+          branch: 'main',
+        },
+        deploy: {
+          strategy: 'in-place',
+          commands: {
+            install: ['echo "Installing node dependencies..."'],
+            build: ['echo "Building node app..."'],
+          },
+          service: {
+            name: 'node-web-app',
+            action: 'none',
+          },
+          ready: {
+            url: 'http://127.0.0.1:3998/health',
+            timeout: '5s',
+            interval: '500ms',
+          },
+        },
+      });
+
+      projRepo.saveProject(config);
+
+      // 3. Push v2.0.0 update to Git repository
+      fs.writeFileSync(path.join(workDir, 'server.js'), 'const version = "v2.0.0";');
+      await safeExec('git', ['add', '.'], { cwd: workDir });
+      await safeExec('git', ['commit', '-m', 'Release Node web app v2.0.0'], { cwd: workDir });
+      await safeExec('git', ['push', 'origin', 'main'], { cwd: workDir });
+
+      const newShaRes = await safeExec('git', ['rev-parse', 'HEAD'], { cwd: workDir });
+      const targetSha = newShaRes.stdout.trim();
+
+      // Update server memory state to simulate live restarted app
+      serverVersion = 'v2.0.0';
+
+      // 4. Run deployment pipeline
+      const depRecord = depRepo.createDeployment({
+        id: 'dep_node_web_1',
+        projectName: 'node-web-app',
+        targetSha,
+        triggerType: 'poll',
+      });
+
+      const runner = new DeploymentPipelineRunner();
+      await runner.runDeployment({
+        deploymentId: depRecord.id,
+        projectName: 'node-web-app',
+        targetSha,
+        triggerType: 'poll',
+        triggeredAt: Date.now(),
+      });
+
+      // 5. Assert deployment success & file update
+      const updatedDep = depRepo.getDeployment('dep_node_web_1');
+      expect(updatedDep?.status).toBe('success');
+
+      const deployedServerJs = fs.readFileSync(path.join(targetPath, 'server.js'), 'utf-8');
+      expect(deployedServerJs).toContain('v2.0.0');
+
+      // 6. Verify HTTP health check response
+      const healthRes = await new Promise<string>((resolve, reject) => {
+        http
+          .get('http://127.0.0.1:3998/health', (res) => {
+            let data = '';
+            res.on('data', (chunk) => {
+              data += chunk;
+            });
+            res.on('end', () => resolve(data));
+          })
+          .on('error', reject);
+      });
+
+      expect(healthRes).toBe('OK v2.0.0');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 25000);
 });
