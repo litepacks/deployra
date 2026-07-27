@@ -31,8 +31,8 @@ program
 program
   .command('add [configPath]')
   .description('Register a new project configuration')
-  .action((configPath) => {
-    addCommand(configPath);
+  .action(async (configPath) => {
+    await addCommand(configPath);
   });
 
 program
