@@ -32,6 +32,7 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
 
     // Initialize working repo
     await safeExec('git', ['init'], { cwd: workDir });
+    await safeExec('git', ['checkout', '-b', 'main'], { cwd: workDir });
     await safeExec('git', ['config', 'user.name', 'Deployra Real Test'], { cwd: workDir });
     await safeExec('git', ['config', 'user.email', 'test@deployra.local'], { cwd: workDir });
     await safeExec('git', ['remote', 'add', 'origin', remoteRepoPath], { cwd: workDir });
@@ -39,7 +40,7 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
     fs.writeFileSync(path.join(workDir, 'build.sh'), 'echo "Build OK"');
     await safeExec('git', ['add', '.'], { cwd: workDir });
     await safeExec('git', ['commit', '-m', 'Initial commit'], { cwd: workDir });
-    await safeExec('git', ['push', 'origin', 'main'], { cwd: workDir });
+    await safeExec('git', ['push', 'origin', 'HEAD:main'], { cwd: workDir });
   });
 
   it('runs real daemon process, registers app via CLI, and auto-deploys git commit update', async () => {
@@ -118,7 +119,7 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       fs.writeFileSync(path.join(workDir, 'server.js'), 'const version = "v2.0.0";');
       await safeExec('git', ['add', '.'], { cwd: workDir });
       await safeExec('git', ['commit', '-m', 'Release real cli app v2.0.0'], { cwd: workDir });
-      await safeExec('git', ['push', 'origin', 'main'], { cwd: workDir });
+      await safeExec('git', ['push', 'origin', 'HEAD:main'], { cwd: workDir });
 
       // Update fixture server version
       fixtureServer.setVersion('v2.0.0');
