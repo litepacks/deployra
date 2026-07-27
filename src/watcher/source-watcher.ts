@@ -14,40 +14,65 @@ export class SourceWatcher {
   private timers = new Map<string, NodeJS.Timeout>();
   private errorCounts = new Map<string, number>();
 
+  private syncTimer?: NodeJS.Timeout;
+  private targetProjectName?: string;
+
   constructor(workmaticEngine: WorkmaticEngine) {
     this.workmaticEngine = workmaticEngine;
   }
 
   public async start(targetProjectName?: string): Promise<void> {
-    const projects = targetProjectName
-      ? ([this.projectRepo.getProject(targetProjectName)].filter(Boolean) as StoredProject[])
-      : this.projectRepo.getAllProjects();
+    this.targetProjectName = targetProjectName;
+    await this.syncProjects();
 
-    if (projects.length === 0) {
-      logger.warn(
-        targetProjectName
-          ? `Project '${targetProjectName}' not found in registry.`
-          : 'No projects found in Deployra registry to watch.',
-      );
-      return;
-    }
-
-    for (const proj of projects) {
-      logger.info(
-        `Started monitoring project '${proj.name}' (${proj.remote}/${proj.branch}) every ${proj.config.watch.intervalMs}ms`,
-        { project: proj.name },
-      );
-      this.scheduleNextCheck(proj.name, 0);
-    }
+    // Periodically re-sync registry every 5 seconds to pick up new/removed projects dynamically
+    this.syncTimer = setInterval(() => {
+      this.syncProjects().catch((err) => {
+        logger.error(`Error auto-syncing projects in watcher: ${err.message}`);
+      });
+    }, 5000);
   }
 
   public async stop(): Promise<void> {
+    if (this.syncTimer) {
+      clearInterval(this.syncTimer);
+      this.syncTimer = undefined;
+    }
     for (const [name, timer] of this.timers.entries()) {
       clearTimeout(timer);
       logger.info(`Stopped watcher for project '${name}'`, { project: name });
     }
     this.timers.clear();
     this.errorCounts.clear();
+  }
+
+  public async syncProjects(): Promise<void> {
+    const allProjects = this.targetProjectName
+      ? ([this.projectRepo.getProject(this.targetProjectName)].filter(Boolean) as StoredProject[])
+      : this.projectRepo.getAllProjects();
+
+    const currentProjectNames = new Set(allProjects.map((p) => p.name));
+
+    // Remove watchers for deleted projects
+    for (const [name, timer] of Array.from(this.timers.entries())) {
+      if (!currentProjectNames.has(name)) {
+        clearTimeout(timer);
+        this.timers.delete(name);
+        this.errorCounts.delete(name);
+        logger.info(`Stopped monitoring removed project '${name}'`, { project: name });
+      }
+    }
+
+    // Add watchers for newly registered projects
+    for (const proj of allProjects) {
+      if (!this.timers.has(proj.name)) {
+        logger.info(
+          `Started monitoring project '${proj.name}' (${proj.remote}/${proj.branch}) every ${proj.config.watch.intervalMs}ms`,
+          { project: proj.name },
+        );
+        this.scheduleNextCheck(proj.name, 0);
+      }
+    }
   }
 
   public async checkProject(

@@ -9,7 +9,7 @@ tsup.config.ts
 tsconfig.json
 vitest.config.ts
 biome.json
-gitship.config.yaml
-gitship.config.yml
-gitship.config.json
+deployra.config.yaml
+deployra.config.yml
+deployra.config.json
 .DS_Store

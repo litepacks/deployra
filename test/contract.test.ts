@@ -16,6 +16,7 @@ import { closeDatabase, resetDatabase } from '../src/storage/database.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
 import { ProjectRepository } from '../src/storage/project-repository.js';
 import { StateRepository } from '../src/storage/state-repository.js';
+import { SourceWatcher } from '../src/watcher/source-watcher.js';
 
 describe('Contract Tests', () => {
   beforeEach(() => {
@@ -206,6 +207,30 @@ describe('Contract Tests', () => {
       await expect(
         client.validateRepository('/non/existent/path/deployra', 'origin'),
       ).rejects.toThrow(RepositoryError);
+    });
+  });
+
+  describe('SourceWatcher Auto-Discovery Contract', () => {
+    it('dynamically discovers newly added projects and syncs watcher timers', async () => {
+      const engine = new WorkmaticEngine();
+      const watcher = new SourceWatcher(engine);
+      const projRepo = new ProjectRepository();
+
+      await watcher.start();
+
+      const config1 = normalizeAndValidateConfig({
+        project: { name: 'auto-app-1', path: '/tmp/auto-app-1' },
+      });
+      projRepo.saveProject(config1);
+
+      await watcher.syncProjects();
+      expect((watcher as any).timers.has('auto-app-1')).toBe(true);
+
+      projRepo.deleteProject('auto-app-1');
+      await watcher.syncProjects();
+      expect((watcher as any).timers.has('auto-app-1')).toBe(false);
+
+      await watcher.stop();
     });
   });
 });
