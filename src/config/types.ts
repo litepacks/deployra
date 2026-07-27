@@ -71,6 +71,8 @@ export interface DeployCommandsConfig {
 export interface DeployServiceConfig {
   name: string;
   action?: ServiceAction; // Default 'restart'
+  script?: string;
+  command?: string;
   memoryMax?: string; // e.g. '512M', '1G'
   memoryHigh?: string; // e.g. '400M'
   cpuQuota?: string; // e.g. '50%'
@@ -143,6 +145,8 @@ export interface NormalizedDeployraConfig {
     service: {
       name: string;
       action: ServiceAction;
+      script?: string;
+      command?: string;
       memoryMax?: string;
       memoryHigh?: string;
       cpuQuota?: string;

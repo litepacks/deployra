@@ -143,13 +143,22 @@ export class DeploymentPipelineRunner {
       await this.runStep(deploymentId, 'service-action', async () => {
         const action = config.deploy.service.action;
         const svcName = config.deploy.service.name;
+        const svcOpts = {
+          cwd: project.path,
+          script: config.deploy.service.script,
+          command: config.deploy.service.command,
+          memoryMax: config.deploy.service.memoryMax,
+          memoryHigh: config.deploy.service.memoryHigh,
+          cpuQuota: config.deploy.service.cpuQuota,
+          restartSec: config.deploy.service.restartSec,
+        };
 
         if (action === 'start') {
-          await this.unitupAdapter.start(svcName);
+          await this.unitupAdapter.start(svcName, svcOpts);
         } else if (action === 'restart') {
-          await this.unitupAdapter.restart(svcName);
+          await this.unitupAdapter.restart(svcName, svcOpts);
         } else if (action === 'reload') {
-          await this.unitupAdapter.reload(svcName);
+          await this.unitupAdapter.reload(svcName, svcOpts);
         }
       });
 

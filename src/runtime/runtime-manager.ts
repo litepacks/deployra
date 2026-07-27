@@ -7,10 +7,20 @@ export interface RuntimeStatus {
   exitStatus?: number;
 }
 
+export interface ServiceOptions {
+  cwd?: string;
+  script?: string;
+  command?: string;
+  memoryMax?: string;
+  memoryHigh?: string;
+  cpuQuota?: string;
+  restartSec?: string;
+}
+
 export interface RuntimeManager {
-  start(service: string): Promise<void>;
+  start(service: string, options?: ServiceOptions): Promise<void>;
   stop(service: string): Promise<void>;
-  restart(service: string): Promise<void>;
-  reload(service: string): Promise<void>;
+  restart(service: string, options?: ServiceOptions): Promise<void>;
+  reload(service: string, options?: ServiceOptions): Promise<void>;
   status(service: string): Promise<RuntimeStatus>;
 }

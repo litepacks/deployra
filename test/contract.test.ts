@@ -39,6 +39,19 @@ describe('Contract Tests', () => {
       const status: RuntimeStatus = await adapter.status('non_existent_service_xyz_123');
       expect(typeof status.active).toBe('boolean');
     });
+
+    it('handles start, restart, reload with options on non-systemd platforms gracefully', async () => {
+      const adapter = new UnitupAdapter();
+      await expect(
+        adapter.start('test-app', { cwd: '/tmp', script: 'index.js' }),
+      ).resolves.not.toThrow();
+      await expect(
+        adapter.restart('test-app', { cwd: '/tmp', script: 'index.js' }),
+      ).resolves.not.toThrow();
+      await expect(
+        adapter.reload('test-app', { cwd: '/tmp', script: 'index.js' }),
+      ).resolves.not.toThrow();
+    });
   });
 
   describe('ReadinessChecker Contract (ReadyCheckerAdapter)', () => {

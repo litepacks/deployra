@@ -89,6 +89,8 @@ export const deployraConfigSchema = z.object({
         .object({
           name: z.string(),
           action: z.enum(['start', 'restart', 'reload', 'none']).default('restart'),
+          script: z.string().optional(),
+          command: z.string().optional(),
           memoryMax: z.string().optional(),
           memoryHigh: z.string().optional(),
           cpuQuota: z.string().optional(),
