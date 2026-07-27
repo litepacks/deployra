@@ -72,10 +72,22 @@ export class WorkmaticEngine {
       );
 
       if (!this.runner) {
-        throw new Error('Pipeline runner is not configured in WorkmaticEngine');
+        logger.error('Pipeline runner is not configured in WorkmaticEngine');
+        return;
       }
 
-      await this.runner.runDeployment(payload);
+      try {
+        await this.runner.runDeployment(payload);
+      } catch (err: any) {
+        logger.error(
+          `Unhandled error executing deployment pipeline for '${payload.projectName}': ${err.message}`,
+          {
+            project: payload.projectName,
+            deploymentId: payload.deploymentId,
+            error: err,
+          },
+        );
+      }
     });
 
     this.worker.start();

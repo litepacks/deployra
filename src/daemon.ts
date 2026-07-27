@@ -21,13 +21,18 @@ export class DeployraDaemon {
   }
 
   public async start(targetProjectName?: string): Promise<void> {
-    logger.info('Starting Deployra Deployment Daemon...');
+    try {
+      logger.info('Starting Deployra Deployment Daemon...');
 
-    await this.workmaticEngine.startWorker();
-    await this.watcher.start(targetProjectName);
+      this.registerSignalHandlers();
+      await this.workmaticEngine.startWorker();
+      await this.watcher.start(targetProjectName);
 
-    this.registerSignalHandlers();
-    logger.info('Deployra Daemon is up and running.');
+      logger.info('Deployra Daemon is up and running.');
+    } catch (err: any) {
+      logger.error(`Fatal error starting Deployra Daemon: ${err.message}`, { error: err });
+      throw err;
+    }
   }
 
   public async shutdown(): Promise<void> {
@@ -56,5 +61,17 @@ export class DeployraDaemon {
 
     process.on('SIGINT', () => handleShutdown('SIGINT'));
     process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+
+    process.on('uncaughtException', (err: Error) => {
+      logger.error(`Uncaught Exception in Deployra Daemon: ${err.message}`, {
+        stack: err.stack,
+      });
+    });
+
+    process.on('unhandledRejection', (reason: any) => {
+      logger.error(`Unhandled Rejection in Deployra Daemon: ${reason?.message || reason}`, {
+        reason,
+      });
+    });
   }
 }
