@@ -3,11 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeAndValidateConfig } from '../src/config/schema.js';
+import { WorkmaticEngine } from '../src/jobs/workmatic-engine.js';
 import { DeploymentPipelineRunner } from '../src/pipeline/pipeline-runner.js';
 import { safeExec } from '../src/security/exec.js';
 import { closeDatabase, resetDatabase } from '../src/storage/database.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
 import { ProjectRepository } from '../src/storage/project-repository.js';
+import { SourceWatcher } from '../src/watcher/source-watcher.js';
+import { createSampleServer } from './fixtures/sample-server.js';
 
 describe('Deployra End-to-End (E2E) Pipeline', () => {
   let tmpDir: string;
@@ -16,10 +19,10 @@ describe('Deployra End-to-End (E2E) Pipeline', () => {
   let targetPath: string;
 
   beforeEach(async () => {
-    process.env.DEPLOYRA_DB_PATH = ':memory:';
-    resetDatabase();
-
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deployra-e2e-'));
+    process.env.DEPLOYRA_DB_PATH = path.join(tmpDir, 'deployra.db');
+    process.env.WORKMATIC_DB_PATH = path.join(tmpDir, 'workmatic.db');
+    resetDatabase();
     remoteRepoPath = path.join(tmpDir, 'remote.git');
     workDir = path.join(tmpDir, 'work');
     targetPath = path.join(tmpDir, 'target');
@@ -209,23 +212,12 @@ describe('Deployra End-to-End (E2E) Pipeline', () => {
   }, 20000);
 
   it('deploys a Node.js web server app with live HTTP health checks on commit update', async () => {
-    const http = await import('node:http');
     const projRepo = new ProjectRepository();
     const depRepo = new DeploymentRepository();
 
-    // 1. Create a live Node.js HTTP health server on port 3998
-    let serverVersion = 'v1.0.0';
-    const server = http.createServer((req, res) => {
-      if (req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end(`OK ${serverVersion}`);
-      } else {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end(`Hello Node App ${serverVersion}`);
-      }
-    });
-
-    await new Promise<void>((resolve) => server.listen(3998, '127.0.0.1', resolve));
+    // 1. Start live sample Node.js HTTP server fixture on port 3998
+    const fixtureServer = createSampleServer('v1.0.0', 3998);
+    await new Promise<void>((resolve) => fixtureServer.server.listen(3998, '127.0.0.1', resolve));
 
     try {
       // 2. Register project with HTTP readiness check
@@ -249,7 +241,7 @@ describe('Deployra End-to-End (E2E) Pipeline', () => {
             action: 'none',
           },
           ready: {
-            url: 'http://127.0.0.1:3998/health',
+            url: `${fixtureServer.url}/health`,
             timeout: '5s',
             interval: '500ms',
           },
@@ -267,8 +259,8 @@ describe('Deployra End-to-End (E2E) Pipeline', () => {
       const newShaRes = await safeExec('git', ['rev-parse', 'HEAD'], { cwd: workDir });
       const targetSha = newShaRes.stdout.trim();
 
-      // Update server memory state to simulate live restarted app
-      serverVersion = 'v2.0.0';
+      // Update server version to simulate restarted app
+      fixtureServer.setVersion('v2.0.0');
 
       // 4. Run deployment pipeline
       const depRecord = depRepo.createDeployment({
@@ -294,22 +286,80 @@ describe('Deployra End-to-End (E2E) Pipeline', () => {
       const deployedServerJs = fs.readFileSync(path.join(targetPath, 'server.js'), 'utf-8');
       expect(deployedServerJs).toContain('v2.0.0');
 
-      // 6. Verify HTTP health check response
-      const healthRes = await new Promise<string>((resolve, reject) => {
-        http
-          .get('http://127.0.0.1:3998/health', (res) => {
-            let data = '';
-            res.on('data', (chunk) => {
-              data += chunk;
-            });
-            res.on('end', () => resolve(data));
-          })
-          .on('error', reject);
-      });
-
-      expect(healthRes).toBe('OK v2.0.0');
+      expect(fixtureServer.getVersion()).toBe('v2.0.0');
     } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await fixtureServer.close();
     }
   }, 25000);
+
+  it('processes deployment jobs asynchronously via Workmatic background queue worker', async () => {
+    const projRepo = new ProjectRepository();
+    const depRepo = new DeploymentRepository();
+    const engine = new WorkmaticEngine();
+    const runner = new DeploymentPipelineRunner();
+    engine.setPipelineRunner(runner);
+
+    const fixtureServer = createSampleServer('v1.0.0', 3999);
+    await new Promise<void>((resolve) => fixtureServer.server.listen(3999, '127.0.0.1', resolve));
+
+    try {
+      // 1. Start Workmatic worker
+      await engine.startWorker();
+
+      // 2. Register project
+      const config = normalizeAndValidateConfig({
+        project: {
+          name: 'queue-app',
+          path: targetPath,
+        },
+        source: {
+          remote: 'origin',
+          branch: 'main',
+        },
+        deploy: {
+          strategy: 'in-place',
+          service: { name: 'queue-app', action: 'none' },
+          ready: {
+            url: `${fixtureServer.url}/health`,
+            timeout: '5s',
+            interval: '500ms',
+          },
+        },
+      });
+      projRepo.saveProject(config);
+
+      // 3. Commit new version to Git repo
+      fs.writeFileSync(path.join(workDir, 'app.js'), 'console.log("queued_v2.0.0");');
+      await safeExec('git', ['add', '.'], { cwd: workDir });
+      await safeExec('git', ['commit', '-m', 'Queued release v2.0.0'], { cwd: workDir });
+      await safeExec('git', ['push', 'origin', 'main'], { cwd: workDir });
+
+      // 4. Trigger watcher check which enqueues job into Workmatic Queue
+      const watcher = new SourceWatcher(engine);
+      const deploymentId = await watcher.checkProject('queue-app', 'poll');
+      expect(deploymentId).toBeTruthy();
+
+      // 5. Poll deployment status in SQLite DB until Workmatic worker processes the job
+      let status = '';
+      for (let i = 0; i < 80; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const dep = depRepo.getDeployment(deploymentId!);
+        if (
+          dep &&
+          (dep.status === 'success' || dep.status === 'failed' || dep.status === 'rolled_back')
+        ) {
+          status = dep.status;
+          break;
+        }
+      }
+
+      expect(status).toBe('success');
+
+      const targetAppContent = fs.readFileSync(path.join(targetPath, 'app.js'), 'utf-8');
+      expect(targetAppContent).toBe('console.log("queued_v2.0.0");');
+    } finally {
+      await engine.stopWorker();
+      await fixtureServer.close();
+    }
+  }, 45000);
 });

@@ -96,19 +96,15 @@ export class SourceWatcher {
         return null;
       }
 
-      this.projectRepo.updateLastSeenSha(projectName, remoteSha);
-
       // Prevent re-deploying same commit SHA unless manual trigger
-      if (
-        triggerType === 'poll' &&
-        remoteSha === proj.lastSeenSha &&
-        remoteSha === proj.lastSuccessfulSha
-      ) {
+      if (triggerType === 'poll' && remoteSha === proj.lastSeenSha) {
         logger.debug(`No change detected for project '${projectName}' (SHA: ${remoteSha})`, {
           project: projectName,
         });
         return null;
       }
+
+      this.projectRepo.updateLastSeenSha(projectName, remoteSha);
 
       logger.info(
         `New commit detected for '${projectName}': ${remoteSha} (previous: ${proj.lastSuccessfulSha || 'none'})`,

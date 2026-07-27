@@ -29,15 +29,22 @@ export class WorkmaticEngine {
   private db: ReturnType<typeof createDatabase>;
 
   constructor() {
-    const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp';
-    const dir = path.join(homeDir, '.deployra');
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    const customDb =
+      process.env.WORKMATIC_DB_PATH ||
+      (process.env.DEPLOYRA_DB_PATH === ':memory:' ? ':memory:' : undefined);
+
+    let dbPath = customDb;
+    if (!dbPath) {
+      const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp';
+      const dir = path.join(homeDir, '.deployra');
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      dbPath = path.join(dir, 'workmatic.db');
     }
-    const dbPath = path.join(dir, 'workmatic.db');
 
     this.db = createDatabase({ filename: dbPath });
-    this.client = createClient({ db: this.db });
+    this.client = createClient({ db: this.db, queue: 'deployra.deploy' });
     this.deploymentRepo = new DeploymentRepository();
   }
 
