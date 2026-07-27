@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import chalk from 'chalk';
 import { createService, removeService } from 'unitup';
 import { UnitupAdapter } from '../../runtime/unitup-adapter.js';
@@ -11,12 +13,25 @@ export async function serviceCommand(
   try {
     switch (action) {
       case 'install': {
-        const binPath = process.argv[1] || 'deployra';
-        await createService({
-          name: serviceName,
-          command: `${binPath} watch`,
-          cwd: process.cwd(),
-        });
+        const rawScript = process.argv[1];
+        const scriptPath =
+          rawScript && fs.existsSync(rawScript) ? path.resolve(rawScript) : undefined;
+
+        if (scriptPath) {
+          await createService({
+            name: serviceName,
+            command: process.execPath,
+            args: [scriptPath, 'watch'],
+            cwd: process.cwd(),
+          });
+        } else {
+          await createService({
+            name: serviceName,
+            command: 'deployra',
+            args: ['watch'],
+            cwd: process.cwd(),
+          });
+        }
         console.log(chalk.green(`✔ Installed systemd service '${serviceName}' via Unitup.`));
         break;
       }
