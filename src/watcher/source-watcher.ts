@@ -70,7 +70,7 @@ export class SourceWatcher {
           `Started monitoring project '${proj.name}' (${proj.remote}/${proj.branch}) every ${proj.config.watch.intervalMs}ms`,
           { project: proj.name },
         );
-        this.scheduleNextCheck(proj.name, 0);
+        this.scheduleNextCheck(proj.name, 0, 0);
       }
     }
   }
@@ -167,11 +167,11 @@ export class SourceWatcher {
     }
   }
 
-  private scheduleNextCheck(projectName: string, errorCount = 0): void {
+  private scheduleNextCheck(projectName: string, errorCount = 0, initialDelayMs?: number): void {
     const proj = this.projectRepo.getProject(projectName);
     if (!proj) return;
 
-    let baseInterval = proj.config.watch.intervalMs;
+    let baseInterval = initialDelayMs !== undefined ? initialDelayMs : proj.config.watch.intervalMs;
 
     // Apply exponential backoff with jitter on consecutive errors
     if (errorCount > 0) {

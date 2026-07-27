@@ -7,11 +7,7 @@ import { SourceWatcher } from '../../watcher/source-watcher.js';
 
 export async function deployCommand(projectName: string): Promise<void> {
   const workmatic = new WorkmaticEngine();
-  const runner = new DeploymentPipelineRunner();
   const depRepo = new DeploymentRepository();
-  workmatic.setPipelineRunner(runner);
-  await workmatic.startWorker();
-
   const watcher = new SourceWatcher(workmatic);
 
   try {
@@ -50,7 +46,6 @@ export async function deployCommand(projectName: string): Promise<void> {
   } catch (err: any) {
     console.error(chalk.red(`✖ Failed to trigger deployment: ${err.message}`));
   } finally {
-    await workmatic.stopWorker();
     closeDatabase();
   }
 }

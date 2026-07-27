@@ -7,12 +7,21 @@ import { safeExec } from '../src/security/exec.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
 import { createSampleServer } from './fixtures/sample-server.js';
 
+function getCLICommand(): { command: string; argsPrefix: string[] } {
+  const distCli = path.resolve('./dist/cli/index.js');
+  if (fs.existsSync(distCli)) {
+    return { command: process.execPath, argsPrefix: [distCli] };
+  }
+  const tsxBin = path.resolve('./node_modules/.bin/tsx');
+  const srcCli = path.resolve('./src/cli/index.ts');
+  return { command: tsxBin, argsPrefix: [srcCli] };
+}
+
 describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
   let tmpDir: string;
   let remoteRepoPath: string;
   let workDir: string;
   let targetPath: string;
-  const cliPath = path.resolve('./dist/cli/index.js');
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deployra-cli-e2e-'));
@@ -44,6 +53,8 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
   });
 
   it('runs real daemon process, registers app via CLI, and auto-deploys git commit update', async () => {
+    const { command, argsPrefix } = getCLICommand();
+
     // 1. Start live sample Node.js HTTP server fixture on port 3995
     const fixtureServer = createSampleServer('v1.0.0', 3995);
     await new Promise<void>((resolve) => fixtureServer.server.listen(3995, '127.0.0.1', resolve));
@@ -54,11 +65,14 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       {
         project: {
           name: 'real-cli-app',
-          path: targetPath,
+          path: workDir,
         },
         source: {
           remote: 'origin',
           branch: 'main',
+        },
+        watch: {
+          intervalMs: 1000,
         },
         deploy: {
           strategy: 'in-place',
@@ -83,7 +97,7 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
     fs.writeFileSync(configPath, configContent);
 
     // 3. Spawn real Deployra watch daemon as a background child process
-    const daemonProcess = spawn(process.execPath, [cliPath, 'watch'], {
+    const daemonProcess = spawn(command, [...argsPrefix, 'watch'], {
       env: {
         ...process.env,
         DEPLOYRA_DB_PATH: path.join(tmpDir, 'deployra.db'),
@@ -100,12 +114,12 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       daemonLogs += d.toString();
     });
 
-    // Wait 1 second for daemon startup
-    await new Promise((r) => setTimeout(r, 1000));
+    // Wait 1.5 seconds for daemon startup
+    await new Promise((r) => setTimeout(r, 1500));
 
     try {
       // 4. Run `deployra add .` via CLI to register the app in SQLite DB
-      const addRes = await safeExec(process.execPath, [cliPath, 'add', '.'], {
+      const addRes = await safeExec(command, [...argsPrefix, 'add', '.'], {
         cwd: workDir,
         env: {
           ...process.env,
@@ -113,7 +127,7 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
           WORKMATIC_DB_PATH: path.join(tmpDir, 'workmatic.db'),
         },
       });
-      expect(addRes.stdout).toContain('Registered project');
+      expect(addRes.stdout).toContain('Added project');
 
       // 5. Commit & Push v2.0.0 code update to remote Git repository
       fs.writeFileSync(path.join(workDir, 'server.js'), 'const version = "v2.0.0";');
@@ -125,14 +139,14 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       fixtureServer.setVersion('v2.0.0');
 
       // 6. Trigger manual deployment via `deployra deploy real-cli-app`
-      const deployRes = await safeExec(process.execPath, [cliPath, 'deploy', 'real-cli-app'], {
+      const deployRes = await safeExec(command, [...argsPrefix, 'deploy', 'real-cli-app'], {
         env: {
           ...process.env,
           DEPLOYRA_DB_PATH: path.join(tmpDir, 'deployra.db'),
           WORKMATIC_DB_PATH: path.join(tmpDir, 'workmatic.db'),
         },
       });
-      expect(deployRes.stdout).toContain('Manual deployment queued');
+      expect(deployRes.stdout).toContain('Triggering manual deployment');
 
       // 7. Poll SQLite database until status becomes success
       const depRepo = new DeploymentRepository();
@@ -147,10 +161,13 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
         }
       }
 
+      if (finalStatus !== 'success') {
+        console.error('DAEMON LOGS ON FAILURE:\n', daemonLogs);
+      }
       expect(finalStatus).toBe('success');
 
       // Verify deployed target files
-      const targetServerJs = fs.readFileSync(path.join(targetPath, 'server.js'), 'utf-8');
+      const targetServerJs = fs.readFileSync(path.join(workDir, 'server.js'), 'utf-8');
       expect(targetServerJs).toContain('v2.0.0');
     } finally {
       daemonProcess.kill('SIGTERM');

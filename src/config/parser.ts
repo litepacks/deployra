@@ -11,10 +11,29 @@ export function findConfigFile(targetPath?: string): string {
     if (!fs.existsSync(resolved)) {
       throw new ConfigValidationError(`Config file not found at: '${targetPath}'`);
     }
+    if (fs.statSync(resolved).isDirectory()) {
+      const candidates = [
+        path.join(resolved, '.deployra.json'),
+        path.join(resolved, 'deployra.json'),
+        path.join(resolved, 'deployra.config.yaml'),
+        path.join(resolved, 'deployra.config.yml'),
+        path.join(resolved, 'deployra.config.json'),
+      ];
+      for (const loc of candidates) {
+        if (fs.existsSync(loc)) {
+          return loc;
+        }
+      }
+      throw new ConfigValidationError(
+        `No configuration file (.deployra.json, deployra.config.yaml) found in directory '${targetPath}'`,
+      );
+    }
     return resolved;
   }
 
   const defaultLocations = [
+    path.resolve(process.cwd(), '.deployra.json'),
+    path.resolve(process.cwd(), 'deployra.json'),
     path.resolve(process.cwd(), 'deployra.config.yaml'),
     path.resolve(process.cwd(), 'deployra.config.yml'),
     path.resolve(process.cwd(), 'deployra.config.json'),
@@ -29,7 +48,7 @@ export function findConfigFile(targetPath?: string): string {
   }
 
   throw new ConfigValidationError(
-    'No deployra.config.yaml file found in current directory or standard configuration paths.',
+    'No deployra configuration file (.deployra.json, deployra.config.yaml) found in current directory or standard configuration paths.',
   );
 }
 
