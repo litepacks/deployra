@@ -1,5 +1,5 @@
-import Table from 'cli-table3';
 import chalk from 'chalk';
+import Table from 'cli-table3';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
 
 export function historyCommand(projectName: string, limit = 10): void {

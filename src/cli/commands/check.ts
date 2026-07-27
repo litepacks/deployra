@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import { WorkmaticEngine } from '../../jobs/workmatic-engine.js';
-import { SourceWatcher } from '../../watcher/source-watcher.js';
-import { ProjectRepository } from '../../storage/project-repository.js';
 import { closeDatabase } from '../../storage/database.js';
+import { ProjectRepository } from '../../storage/project-repository.js';
+import { SourceWatcher } from '../../watcher/source-watcher.js';
 
 export async function checkCommand(targetProjectName?: string): Promise<void> {
   const workmatic = new WorkmaticEngine();

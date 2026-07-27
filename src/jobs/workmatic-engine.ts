@@ -1,16 +1,16 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import {
-  createDatabase,
   createClient,
+  createDatabase,
   createWorker,
+  type Job,
   type WorkmaticClient,
   type WorkmaticWorker,
-  type Job,
 } from 'workmatic';
-import path from 'node:path';
-import fs from 'node:fs';
 import { logger } from '../logging/logger.js';
-import { DeploymentRepository } from '../storage/deployment-repository.js';
 import type { DeploymentPipelineRunner } from '../pipeline/pipeline-runner.js';
+import { DeploymentRepository } from '../storage/deployment-repository.js';
 
 export interface DeploymentJobPayload {
   deploymentId: string;
@@ -30,7 +30,7 @@ export class WorkmaticEngine {
 
   constructor() {
     const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp';
-    const dir = path.join(homeDir, '.gitship');
+    const dir = path.join(homeDir, '.deployra');
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -50,7 +50,7 @@ export class WorkmaticEngine {
 
     this.worker = createWorker({
       db: this.db,
-      queue: 'gitship.deploy',
+      queue: 'deployra.deploy',
       concurrency: 1,
     });
 

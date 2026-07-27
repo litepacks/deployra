@@ -1,5 +1,5 @@
+import type { NormalizedDeployraConfig } from '../config/types.js';
 import { getDatabase } from './database.js';
-import type { NormalizedGitshipConfig } from '../config/types.js';
 
 export interface StoredProject {
   name: string;
@@ -8,12 +8,12 @@ export interface StoredProject {
   branch: string;
   lastSeenSha?: string;
   lastSuccessfulSha?: string;
-  config: NormalizedGitshipConfig;
+  config: NormalizedDeployraConfig;
   updatedAt: number;
 }
 
 export class ProjectRepository {
-  public saveProject(config: NormalizedGitshipConfig): StoredProject {
+  public saveProject(config: NormalizedDeployraConfig): StoredProject {
     const db = getDatabase();
     const now = Date.now();
 

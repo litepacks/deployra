@@ -1,11 +1,11 @@
 import { WorkmaticEngine } from './jobs/workmatic-engine.js';
+import { logger } from './logging/logger.js';
 import { DeploymentPipelineRunner } from './pipeline/pipeline-runner.js';
-import { SourceWatcher } from './watcher/source-watcher.js';
 import { closeDatabase } from './storage/database.js';
 import { StateRepository } from './storage/state-repository.js';
-import { logger } from './logging/logger.js';
+import { SourceWatcher } from './watcher/source-watcher.js';
 
-export class GitshipDaemon {
+export class DeployraDaemon {
   private workmaticEngine: WorkmaticEngine;
   private pipelineRunner: DeploymentPipelineRunner;
   private watcher: SourceWatcher;
@@ -21,27 +21,27 @@ export class GitshipDaemon {
   }
 
   public async start(targetProjectName?: string): Promise<void> {
-    logger.info('Starting Gitship Deployment Daemon...');
+    logger.info('Starting Deployra Deployment Daemon...');
 
     await this.workmaticEngine.startWorker();
     await this.watcher.start(targetProjectName);
 
     this.registerSignalHandlers();
-    logger.info('Gitship Daemon is up and running.');
+    logger.info('Deployra Daemon is up and running.');
   }
 
   public async shutdown(): Promise<void> {
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
 
-    logger.info('Shutting down Gitship Daemon gracefully...');
+    logger.info('Shutting down Deployra Daemon gracefully...');
 
     try {
       await this.watcher.stop();
       await this.workmaticEngine.stopWorker();
       this.stateRepo.clearAllLocks();
       closeDatabase();
-      logger.info('Gitship Daemon shutdown complete.');
+      logger.info('Deployra Daemon shutdown complete.');
     } catch (err: any) {
       logger.error(`Error during daemon shutdown: ${err.message}`);
     }

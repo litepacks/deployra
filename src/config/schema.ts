@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { z } from 'zod';
+import { ConfigValidationError } from '../errors/deployra-error.js';
 import { parseDurationMs } from './duration.js';
-import { ConfigValidationError } from '../errors/gitship-error.js';
-import type { NormalizedGitshipConfig } from './types.js';
+import type { NormalizedDeployraConfig } from './types.js';
 
 const durationSchema = z.union([z.string(), z.number()]);
 
@@ -49,7 +49,7 @@ const individualCheckSchema = z.discriminatedUnion('type', [
   fileCheckSchema,
 ]);
 
-export const gitshipConfigSchema = z.object({
+export const deployraConfigSchema = z.object({
   project: z.object({
     name: z.string().min(1, 'project.name is required'),
     path: z.string().min(1, 'project.path is required'),
@@ -116,8 +116,8 @@ export const gitshipConfigSchema = z.object({
     .default({}),
 });
 
-export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedGitshipConfig {
-  const result = gitshipConfigSchema.safeParse(rawConfig);
+export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeployraConfig {
+  const result = deployraConfigSchema.safeParse(rawConfig);
   if (!result.success) {
     const issues = result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ');
     throw new ConfigValidationError(`Invalid configuration: ${issues}`);
@@ -135,7 +135,7 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedGitshi
   // Normalize Ready check config
   let readyTimeoutMs = 45000;
   let readyIntervalMs = 2000;
-  let readyMode: NormalizedGitshipConfig['deploy']['ready']['mode'] = 'all';
+  let readyMode: NormalizedDeployraConfig['deploy']['ready']['mode'] = 'all';
   const checks = data.deploy.ready?.checks ? [...data.deploy.ready.checks] : [];
 
   if (data.deploy.ready) {
@@ -161,7 +161,7 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedGitshi
   }
 
   const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp';
-  const defaultWorkspacePath = path.join(homeDir, '.gitship/workspaces', data.project.name);
+  const defaultWorkspacePath = path.join(homeDir, '.deployra/workspaces', data.project.name);
   const resolvedWorkspacePath = data.deploy.workspacePath
     ? path.resolve(data.deploy.workspacePath)
     : defaultWorkspacePath;

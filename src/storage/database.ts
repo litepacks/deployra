@@ -1,22 +1,23 @@
-import Database, { type Database as SQLiteDatabase } from 'better-sqlite3';
-import path from 'node:path';
 import fs from 'node:fs';
+import path from 'node:path';
+import Database, { type Database as SQLiteDatabase } from 'better-sqlite3';
 
 let dbInstance: SQLiteDatabase | null = null;
 
 export function getDatabasePath(): string {
-  if (process.env.GITSHIP_DB_PATH) {
-    if (process.env.GITSHIP_DB_PATH === ':memory:') {
+  const customPath = process.env.DEPLOYRA_DB_PATH;
+  if (customPath) {
+    if (customPath === ':memory:') {
       return ':memory:';
     }
-    return path.resolve(process.env.GITSHIP_DB_PATH);
+    return path.resolve(customPath);
   }
   const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp';
-  const dir = path.join(homeDir, '.gitship');
+  const dir = path.join(homeDir, '.deployra');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  return path.join(dir, 'gitship.db');
+  return path.join(dir, 'deployra.db');
 }
 
 export function getDatabase(): SQLiteDatabase {

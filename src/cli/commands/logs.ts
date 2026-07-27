@@ -1,6 +1,6 @@
 import chalk from 'chalk';
-import { DeploymentRepository } from '../../storage/deployment-repository.js';
 import { maskSecrets } from '../../logging/masker.js';
+import { DeploymentRepository } from '../../storage/deployment-repository.js';
 
 export function logsCommand(
   projectName?: string,

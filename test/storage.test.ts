@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { ProjectRepository } from '../src/storage/project-repository.js';
-import { DeploymentRepository } from '../src/storage/deployment-repository.js';
-import { StateRepository } from '../src/storage/state-repository.js';
-import { closeDatabase, getDatabase, resetDatabase } from '../src/storage/database.js';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeAndValidateConfig } from '../src/config/schema.js';
+import { closeDatabase, resetDatabase } from '../src/storage/database.js';
+import { DeploymentRepository } from '../src/storage/deployment-repository.js';
+import { ProjectRepository } from '../src/storage/project-repository.js';
+import { StateRepository } from '../src/storage/state-repository.js';
 
 describe('Storage & Repository Tests', () => {
   beforeEach(() => {
     // Set temporary memory database
-    process.env.GITSHIP_DB_PATH = ':memory:';
+    process.env.DEPLOYRA_DB_PATH = ':memory:';
     resetDatabase();
   });
 

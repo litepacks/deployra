@@ -1,5 +1,5 @@
+import { RepositoryError } from '../errors/deployra-error.js';
 import { safeExec } from '../security/exec.js';
-import { RepositoryError } from '../errors/gitship-error.js';
 
 export class GitClient {
   public async checkRemoteHead(

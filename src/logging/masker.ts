@@ -1,12 +1,12 @@
 const SECRET_PATTERNS = [
-  /bearer\s+[a-zA-Z0-9_\-\.\~]+(?:\:[a-zA-Z0-9_\-\.\~]+)?/gi,
+  /bearer\s+[a-zA-Z0-9_\-.~]+(?::[a-zA-Z0-9_\-.~]+)?/gi,
   /password\s*[:=]\s*["']?[^"'\s\n,]+["']?/gi,
   /secret\s*[:=]\s*["']?[^"'\s\n,]+["']?/gi,
   /token\s*[:=]\s*["']?[^"'\s\n,]+["']?/gi,
   /api[_-]?key\s*[:=]\s*["']?[^"'\s\n,]+["']?/gi,
   /-----BEGIN[A-Z\s]+PRIVATE KEY-----[\s\S]*?-----END[A-Z\s]+PRIVATE KEY-----/g,
   /ghp_[a-zA-Z0-9]{36,}/g,
-  /glpat-[a-zA-Z0-9\-]{20,}/g,
+  /glpat-[a-zA-Z0-9-]{20,}/g,
   /https?:\/\/([^:]+):([^@]+)@/g, // URLs with user:password
 ];
 

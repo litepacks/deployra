@@ -1,12 +1,12 @@
 {
-  "name": "gitship",
+  "name": "deployra",
   "version": "0.0.1",
   "description": "Lightweight, platform-independent VPS deployment orchestrator",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "gitship": "./dist/cli/index.js"
+    "deployra": "./dist/cli/index.js"
   },
   "files": [
     "dist",
@@ -21,7 +21,7 @@
     "format": "biome format --write ."
   },
   "keywords": [
-    "gitship",
+    "deployra",
     "deployment",
     "vps",
     "orchestrator",

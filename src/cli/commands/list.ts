@@ -1,5 +1,5 @@
-import Table from 'cli-table3';
 import chalk from 'chalk';
+import Table from 'cli-table3';
 import { ProjectRepository } from '../../storage/project-repository.js';
 
 export function listCommand(): void {
@@ -9,7 +9,7 @@ export function listCommand(): void {
   if (projects.length === 0) {
     console.log(
       chalk.yellow(
-        'No projects currently registered in Gitship. Use `gitship add` to register a project.',
+        'No projects currently registered in Deployra. Use `deployra add` to register a project.',
       ),
     );
     return;

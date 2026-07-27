@@ -1,10 +1,10 @@
+import type { NormalizedDeployraConfig } from '../config/types.js';
+import { RollbackError } from '../errors/deployra-error.js';
 import { GitClient } from '../git/git-client.js';
-import { UnitupAdapter } from '../runtime/unitup-adapter.js';
-import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
-import { safeExec } from '../security/exec.js';
 import { logger } from '../logging/logger.js';
-import { RollbackError } from '../errors/gitship-error.js';
-import type { NormalizedGitshipConfig } from '../config/types.js';
+import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
+import { UnitupAdapter } from '../runtime/unitup-adapter.js';
+import { safeExec } from '../security/exec.js';
 
 export class RollbackManager {
   private gitClient = new GitClient();
@@ -15,7 +15,7 @@ export class RollbackManager {
     projectName: string;
     projectPath: string;
     previousSuccessfulSha: string;
-    config: NormalizedGitshipConfig;
+    config: NormalizedDeployraConfig;
   }): Promise<void> {
     logger.warn(
       `Initiating automated rollback for project '${data.projectName}' to SHA ${data.previousSuccessfulSha}`,

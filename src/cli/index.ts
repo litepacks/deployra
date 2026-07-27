@@ -1,29 +1,29 @@
 import { Command } from 'commander';
-import { initCommand } from './commands/init.js';
 import { addCommand } from './commands/add.js';
-import { removeCommand } from './commands/remove.js';
-import { listCommand } from './commands/list.js';
-import { watchCommand } from './commands/watch.js';
+import { cancelCommand } from './commands/cancel.js';
 import { checkCommand } from './commands/check.js';
 import { deployCommand } from './commands/deploy.js';
-import { cancelCommand } from './commands/cancel.js';
-import { statusCommand } from './commands/status.js';
-import { logsCommand } from './commands/logs.js';
-import { historyCommand } from './commands/history.js';
 import { doctorCommand } from './commands/doctor.js';
+import { historyCommand } from './commands/history.js';
+import { initCommand } from './commands/init.js';
+import { listCommand } from './commands/list.js';
+import { logsCommand } from './commands/logs.js';
+import { removeCommand } from './commands/remove.js';
 import { serviceCommand } from './commands/service.js';
 import { statsCommand } from './commands/stats.js';
+import { statusCommand } from './commands/status.js';
+import { watchCommand } from './commands/watch.js';
 
 const program = new Command();
 
 program
-  .name('gitship')
+  .name('deployra')
   .description('Lightweight, platform-independent VPS deployment orchestrator')
   .version('1.0.0');
 
 program
   .command('init [path]')
-  .description('Initialize a sample gitship.config.yaml file')
+  .description('Initialize a sample deployra.config.yaml file')
   .action((path) => {
     initCommand(path);
   });
@@ -37,7 +37,7 @@ program
 
 program
   .command('remove <projectName>')
-  .description('Remove a project from Gitship registry')
+  .description('Remove a project from Deployra registry')
   .action((projectName) => {
     removeCommand(projectName);
   });
@@ -119,7 +119,7 @@ program
 program
   .command('service <action>')
   .description(
-    'Manage Gitship daemon systemd service (install|start|stop|restart|status|uninstall)',
+    'Manage Deployra daemon systemd service (install|start|stop|restart|status|uninstall)',
   )
   .action(async (action) => {
     await serviceCommand(action as any);

@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { parseDurationMs, formatDurationMs } from '../src/config/duration.js';
+import { describe, expect, it } from 'vitest';
+import { formatDurationMs, parseDurationMs } from '../src/config/duration.js';
 import { normalizeAndValidateConfig } from '../src/config/schema.js';
-import { ConfigValidationError } from '../src/errors/gitship-error.js';
+import { ConfigValidationError } from '../src/errors/deployra-error.js';
 
 describe('Config Duration Utility', () => {
   it('parses various human-readable durations accurately', () => {
@@ -64,7 +64,7 @@ describe('Config Schema Validation', () => {
       project: { name: 'app1', path: '/app1' },
     });
     expect(defaultNorm.deploy.strategy).toBe('in-place');
-    expect(defaultNorm.deploy.workspacePath).toContain('.gitship/workspaces/app1');
+    expect(defaultNorm.deploy.workspacePath).toContain('.deployra/workspaces/app1');
 
     const isolatedNorm = normalizeAndValidateConfig({
       project: { name: 'app2', path: '/app2' },

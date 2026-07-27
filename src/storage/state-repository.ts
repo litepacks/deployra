@@ -1,5 +1,4 @@
 import { getDatabase } from './database.js';
-import { LockError } from '../errors/gitship-error.js';
 
 export class StateRepository {
   public acquireLock(projectName: string, lockedBy: string): boolean {

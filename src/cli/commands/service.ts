@@ -1,17 +1,17 @@
 import chalk from 'chalk';
-import { UnitupAdapter } from '../../runtime/unitup-adapter.js';
 import { createService, removeService } from 'unitup';
+import { UnitupAdapter } from '../../runtime/unitup-adapter.js';
 
 export async function serviceCommand(
   action: 'install' | 'start' | 'stop' | 'restart' | 'status' | 'uninstall',
 ): Promise<void> {
   const adapter = new UnitupAdapter();
-  const serviceName = 'gitship-daemon';
+  const serviceName = 'deployra-daemon';
 
   try {
     switch (action) {
       case 'install': {
-        const binPath = process.argv[1] || 'gitship';
+        const binPath = process.argv[1] || 'deployra';
         await createService({
           name: serviceName,
           command: `${binPath} watch`,

@@ -1,9 +1,9 @@
-import { GitClient } from '../git/git-client.js';
-import { ProjectRepository, type StoredProject } from '../storage/project-repository.js';
-import { DeploymentRepository } from '../storage/deployment-repository.js';
-import { WorkmaticEngine } from '../jobs/workmatic-engine.js';
-import { logger } from '../logging/logger.js';
 import { nanoid } from 'nanoid';
+import { GitClient } from '../git/git-client.js';
+import type { WorkmaticEngine } from '../jobs/workmatic-engine.js';
+import { logger } from '../logging/logger.js';
+import { DeploymentRepository } from '../storage/deployment-repository.js';
+import { ProjectRepository, type StoredProject } from '../storage/project-repository.js';
 
 export class SourceWatcher {
   private gitClient = new GitClient();
@@ -27,7 +27,7 @@ export class SourceWatcher {
       logger.warn(
         targetProjectName
           ? `Project '${targetProjectName}' not found in registry.`
-          : 'No projects found in Gitship registry to watch.',
+          : 'No projects found in Deployra registry to watch.',
       );
       return;
     }
@@ -154,7 +154,7 @@ export class SourceWatcher {
 
     // Apply exponential backoff with jitter on consecutive errors
     if (errorCount > 0) {
-      const backoffMultiplier = Math.min(Math.pow(2, errorCount), 16);
+      const backoffMultiplier = Math.min(2 ** errorCount, 16);
       const jitter = Math.random() * 1000;
       baseInterval = baseInterval * backoffMultiplier + jitter;
     }

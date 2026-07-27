@@ -1,5 +1,5 @@
-import { spawn, type SpawnOptions } from 'node:child_process';
-import { CommandExecutionError } from '../errors/gitship-error.js';
+import { type SpawnOptions, spawn } from 'node:child_process';
+import { CommandExecutionError } from '../errors/deployra-error.js';
 
 export interface ExecOptions {
   cwd?: string;

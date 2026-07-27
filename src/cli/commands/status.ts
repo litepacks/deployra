@@ -1,7 +1,7 @@
-import Table from 'cli-table3';
 import chalk from 'chalk';
-import { ProjectRepository } from '../../storage/project-repository.js';
+import Table from 'cli-table3';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
+import { ProjectRepository } from '../../storage/project-repository.js';
 
 export function statusCommand(projectName?: string): void {
   const projRepo = new ProjectRepository();

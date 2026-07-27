@@ -105,7 +105,7 @@ export interface WatchConfig {
   interval?: string | number; // Default '30s'
 }
 
-export interface GitshipConfig {
+export interface DeployraConfig {
   project: ProjectConfig;
   source?: SourceConfig;
   watch?: WatchConfig;
@@ -113,7 +113,7 @@ export interface GitshipConfig {
 }
 
 // Normalized internal representation with resolved default values and duration milliseconds
-export interface NormalizedGitshipConfig {
+export interface NormalizedDeployraConfig {
   project: {
     name: string;
     path: string;

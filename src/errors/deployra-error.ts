@@ -1,22 +1,22 @@
-export class GitshipError extends Error {
+export class DeployraError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'GitshipError';
+    this.name = 'DeployraError';
   }
 }
 
-export class RepositoryError extends GitshipError {
+export class RepositoryError extends DeployraError {
   constructor(message: string) {
     super(message);
     this.name = 'RepositoryError';
   }
 }
 
-export class CommandExecutionError extends GitshipError {
-  public exitCode?: number;
-  public stderr?: string;
+export class CommandExecutionError extends DeployraError {
+  public exitCode: number;
+  public stderr: string;
 
-  constructor(message: string, exitCode?: number, stderr?: string) {
+  constructor(message: string, exitCode = 1, stderr = '') {
     super(message);
     this.name = 'CommandExecutionError';
     this.exitCode = exitCode;
@@ -24,35 +24,35 @@ export class CommandExecutionError extends GitshipError {
   }
 }
 
-export class RuntimeError extends GitshipError {
+export class RuntimeError extends DeployraError {
   constructor(message: string) {
     super(message);
     this.name = 'RuntimeError';
   }
 }
 
-export class ReadinessError extends GitshipError {
+export class ReadinessError extends DeployraError {
   constructor(message: string) {
     super(message);
     this.name = 'ReadinessError';
   }
 }
 
-export class RollbackError extends GitshipError {
+export class RollbackError extends DeployraError {
   constructor(message: string) {
     super(message);
     this.name = 'RollbackError';
   }
 }
 
-export class ConfigValidationError extends GitshipError {
+export class ConfigValidationError extends DeployraError {
   constructor(message: string) {
     super(message);
     this.name = 'ConfigValidationError';
   }
 }
 
-export class LockError extends GitshipError {
+export class LockError extends DeployraError {
   constructor(message: string) {
     super(message);
     this.name = 'LockError';

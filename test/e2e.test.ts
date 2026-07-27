@@ -1,25 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
-import { safeExec } from '../src/security/exec.js';
-import { DeploymentPipelineRunner } from '../src/pipeline/pipeline-runner.js';
-import { ProjectRepository } from '../src/storage/project-repository.js';
-import { DeploymentRepository } from '../src/storage/deployment-repository.js';
-import { resetDatabase, closeDatabase } from '../src/storage/database.js';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeAndValidateConfig } from '../src/config/schema.js';
+import { DeploymentPipelineRunner } from '../src/pipeline/pipeline-runner.js';
+import { safeExec } from '../src/security/exec.js';
+import { closeDatabase, resetDatabase } from '../src/storage/database.js';
+import { DeploymentRepository } from '../src/storage/deployment-repository.js';
+import { ProjectRepository } from '../src/storage/project-repository.js';
 
-describe('Gitship End-to-End (E2E) Pipeline', () => {
+describe('Deployra End-to-End (E2E) Pipeline', () => {
   let tmpDir: string;
   let remoteRepoPath: string;
   let workDir: string;
   let targetPath: string;
 
   beforeEach(async () => {
-    process.env.GITSHIP_DB_PATH = ':memory:';
+    process.env.DEPLOYRA_DB_PATH = ':memory:';
     resetDatabase();
 
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitship-e2e-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deployra-e2e-'));
     remoteRepoPath = path.join(tmpDir, 'remote.git');
     workDir = path.join(tmpDir, 'work');
     targetPath = path.join(tmpDir, 'target');
@@ -33,8 +33,8 @@ describe('Gitship End-to-End (E2E) Pipeline', () => {
 
     // Initialize working repo, commit initial files, and push to remote
     await safeExec('git', ['init'], { cwd: workDir });
-    await safeExec('git', ['config', 'user.name', 'Gitship Test'], { cwd: workDir });
-    await safeExec('git', ['config', 'user.email', 'test@gitship.local'], { cwd: workDir });
+    await safeExec('git', ['config', 'user.name', 'Deployra Test'], { cwd: workDir });
+    await safeExec('git', ['config', 'user.email', 'test@deployra.local'], { cwd: workDir });
     await safeExec('git', ['remote', 'add', 'origin', remoteRepoPath], { cwd: workDir });
 
     fs.writeFileSync(path.join(workDir, 'build.sh'), 'echo "Build OK"');
@@ -51,8 +51,8 @@ describe('Gitship End-to-End (E2E) Pipeline', () => {
 
     // Clone working copy into targetPath as initial setup
     await safeExec('git', ['clone', remoteRepoPath, targetPath]);
-    await safeExec('git', ['config', 'user.name', 'Gitship Test'], { cwd: targetPath });
-    await safeExec('git', ['config', 'user.email', 'test@gitship.local'], { cwd: targetPath });
+    await safeExec('git', ['config', 'user.name', 'Deployra Test'], { cwd: targetPath });
+    await safeExec('git', ['config', 'user.email', 'test@deployra.local'], { cwd: targetPath });
   });
 
   afterEach(() => {

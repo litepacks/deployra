@@ -6,7 +6,7 @@ export function removeCommand(projectName: string): void {
   const deleted = repo.deleteProject(projectName);
 
   if (deleted) {
-    console.log(chalk.green(`✔ Removed project '${projectName}' from Gitship registry.`));
+    console.log(chalk.green(`✔ Removed project '${projectName}' from Deployra registry.`));
   } else {
     console.log(chalk.yellow(`Project '${projectName}' was not found in registry.`));
   }

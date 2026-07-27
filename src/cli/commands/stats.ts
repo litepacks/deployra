@@ -1,8 +1,8 @@
-import Table from 'cli-table3';
 import chalk from 'chalk';
-import { ProjectRepository } from '../../storage/project-repository.js';
-import { DeploymentRepository } from '../../storage/deployment-repository.js';
+import Table from 'cli-table3';
 import { formatDurationMs } from '../../config/duration.js';
+import { DeploymentRepository } from '../../storage/deployment-repository.js';
+import { ProjectRepository } from '../../storage/project-repository.js';
 
 export function statsCommand(projectName?: string): void {
   const projRepo = new ProjectRepository();
@@ -12,7 +12,7 @@ export function statsCommand(projectName?: string): void {
   const targetProjects = projectName ? projects.filter((p) => p.name === projectName) : projects;
 
   if (projectName && targetProjects.length === 0) {
-    console.log(chalk.yellow(`Project '${projectName}' not found in Gitship registry.`));
+    console.log(chalk.yellow(`Project '${projectName}' not found in Deployra registry.`));
     return;
   }
 
@@ -20,7 +20,7 @@ export function statsCommand(projectName?: string): void {
   const successRate = stats.total > 0 ? ((stats.success / stats.total) * 100).toFixed(1) : '0.0';
 
   console.log(
-    chalk.bold(`\n📊 Gitship Deployment Statistics${projectName ? ` (${projectName})` : ''}:\n`),
+    chalk.bold(`\n📊 Deployra Deployment Statistics${projectName ? ` (${projectName})` : ''}:\n`),
   );
 
   const table = new Table({

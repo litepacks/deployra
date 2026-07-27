@@ -1,8 +1,8 @@
-# Gitship 🚢
+# Deployra 🚀
 
 Lightweight, platform-independent & language-agnostic VPS deployment orchestrator.
 
-Gitship is 100% language and framework independent. Whether your application is built with **Node.js, Go, Python, Rust, PHP, Java, Ruby, Docker binaries, or static HTML**, Gitship automatically monitors remote Git repositories, queues background deployments via an embedded execution engine (**Workmatic**), manages systemd service lifecycles via **Unitup**, verifies application post-deploy readiness via **Ready-checker**, and executes automated rollbacks on failure.
+Deployra is 100% language and framework independent. Whether your application is built with **Node.js, Go, Python, Rust, PHP, Java, Ruby, Docker binaries, or static HTML**, Deployra automatically monitors remote Git repositories, queues background deployments via an embedded execution engine (**Workmatic**), manages systemd service lifecycles via **Unitup**, verifies application post-deploy readiness via **Ready-checker**, and executes automated rollbacks on failure.
 
 ---
 
@@ -11,7 +11,7 @@ Gitship is 100% language and framework independent. Whether your application is 
 ```text
 Remote Git repository
         ↓
-Gitship watcher
+Deployra watcher
         ↓
 Deployment pipeline
         ↓
@@ -21,7 +21,7 @@ Readiness verification
 ```
 
 > [!NOTE]
-> **Internal Execution Engines**: Gitship integrates `workmatic` (persistent SQLite job queue), `unitup` (systemd service manager), and `ready-checker` (application readiness engine) as internal implementation layers. Users **never** have to write package names like `workmatic`, `unitup`, or `ready-checker` in their configuration files.
+> **Internal Execution Engines**: Deployra integrates `workmatic` (persistent SQLite job queue), `unitup` (systemd service manager), and `ready-checker` (application readiness engine) as internal implementation layers. Users **never** have to write package names like `workmatic`, `unitup`, or `ready-checker` in their configuration files.
 
 ---
 
@@ -41,12 +41,13 @@ Readiness verification
 ## Installation
 
 ```bash
-# Clone and build
-cd gitship
+# Install via npm
+npm install -g deployra
+
+# Or clone and build
+cd deployra
 npm install
 npm run build
-
-# Link CLI globally (optional)
 npm link
 ```
 
@@ -57,10 +58,10 @@ npm link
 ### 1. Initialize Sample Configuration
 
 ```bash
-gitship init
+deployra init
 ```
 
-This creates a `gitship.config.yaml` file in the current directory:
+This creates a `deployra.config.yaml` file in the current directory:
 
 ```yaml
 project:
@@ -93,8 +94,6 @@ deploy:
   service:
     name: api
     action: restart
-    memoryMax: 512M
-    cpuQuota: 50%
 
   ready:
     url: http://127.0.0.1:3000/health
@@ -109,22 +108,17 @@ deploy:
       - ready-failure
 ```
 
-### 2. Register Project
+### 2. Register & Validate Project
 
 ```bash
-gitship add gitship.config.yaml
+deployra add deployra.config.yaml
+deployra doctor
 ```
 
-### 3. Run System Diagnostics
+### 3. Start Watcher Daemon
 
 ```bash
-gitship doctor
-```
-
-### 4. Start Watcher Daemon
-
-```bash
-gitship watch
+deployra watch
 ```
 
 ---
@@ -132,21 +126,21 @@ gitship watch
 ## CLI Reference
 
 | Command | Description |
-|---|---|
-| `gitship init [path]` | Generate a sample `gitship.config.yaml` file |
-| `gitship add [configPath]` | Register a project configuration with Gitship |
-| `gitship remove <app>` | Deregister a project from Gitship registry |
-| `gitship list` | List all registered projects and SHA statuses |
-| `gitship watch [app]` | Start long-running polling daemon |
-| `gitship check [app]` | Perform a one-shot remote change check |
-| `gitship deploy <app>` | Trigger a manual deployment |
-| `gitship cancel <target>` | Cancel an active or queued deployment |
-| `gitship status [app]` | View status summary of projects |
-| `gitship stats [app]` | Display deployment metrics and success statistics |
-| `gitship logs [app]` | View deployment step logs and errors |
-| `gitship history <app>` | View past deployment history |
-| `gitship doctor` | Run system diagnostics |
-| `gitship service <action>` | Manage Gitship as a systemd service (`install\|start\|stop\|restart\|status\|uninstall`) |
+| :--- | :--- |
+| `deployra init [path]` | Generate a sample `deployra.config.yaml` file |
+| `deployra add [configPath]` | Register a project configuration with Deployra |
+| `deployra remove <app>` | Deregister a project from Deployra registry |
+| `deployra list` | List all registered projects and SHA statuses |
+| `deployra watch [app]` | Start long-running polling daemon |
+| `deployra check [app]` | Perform a one-shot remote change check |
+| `deployra deploy <app>` | Trigger a manual deployment |
+| `deployra cancel <target>` | Cancel an active or queued deployment |
+| `deployra status [app]` | View status summary of projects |
+| `deployra stats [app]` | Display deployment metrics and success statistics |
+| `deployra logs [app]` | View deployment step logs and errors |
+| `deployra history <app>` | View past deployment history |
+| `deployra doctor` | Run system diagnostics |
+| `deployra service <action>` | Manage Deployra as a systemd service (`install\|start\|stop\|restart\|status\|uninstall`) |
 
 ---
 
@@ -161,64 +155,54 @@ gitship watch
 - `branch` (string, default: `main`): Target branch to track.
 
 ### `watch`
-- `interval` (duration, default: `30s`): Polling interval (`500ms`, `30s`, `5m`, `1h`).
+- `interval` (string/number, default: `30s`): Polling interval (e.g. `30s`, `1m`, `500ms`).
 
 ### `deploy`
-- `strategy` (`in-place` \| `isolated`, default: `in-place`): Deployment execution strategy (`in-place` builds directly in `project.path`; `isolated` builds inside an isolated workspace before syncing).
-- `workspacePath` (string, optional): Custom workspace directory for `isolated` strategy (defaults to `~/.gitship/workspaces/<project>`).
-- `concurrency` (number, default: `1`): Max concurrent deployments for project.
-- `queueMode` (`latest` \| `fifo` \| `reject`, default: `latest`): Queue behavior when new commit arrives during active deployment.
-- `dirtyWorkspace` (`reject` \| `reset` \| `stash`, default: `reject`): Action when working tree has uncommitted local changes.
-- `timeout` (duration, default: `10m`): Deployment pipeline timeout.
-- `retry.attempts` (number, default: `2`): Command retry attempts.
-- `retry.backoff` (duration, default: `10s`): Backoff delay between retries.
-- `commands.install` (array of strings): Install commands executed sequentially.
-- `commands.build` (array of strings): Build commands executed sequentially.
-- `service.name` (string): Service name managed via Unitup systemd manager.
-- `service.action` (`start` \| `restart` \| `reload` \| `none`, default: `restart`): Action performed post-build.
-- `service.memoryMax` (string, optional): Systemd hard memory limit (e.g. `512M`, `1G`).
-- `service.memoryHigh` (string, optional): Systemd soft memory throttling limit (e.g. `400M`).
-- `service.cpuQuota` (string, optional): Systemd CPU quota limit (e.g. `50%`).
-- `service.restartSec` (string, optional): Systemd restart delay (e.g. `5s`).
-- `ready.url` (string, optional): Shorthand HTTP readiness check URL.
-- `ready.timeout` (duration, default: `45s`): Readiness check timeout.
-- `ready.interval` (duration, default: `2s`): Readiness check retry interval.
-- `ready.mode` (`all` \| `any` \| `sequence`, default: `all`): Readiness evaluation mode.
-- `ready.checks` (array): Advanced composite checks (`http`, `https`, `tcp`, `command`, `process`, `file`).
-- `rollback.enabled` (boolean, default: `true`): Enable automated rollback on failure.
-- `rollback.on` (array): Failures triggering rollback (`build-failure`, `service-failure`, `ready-failure`).
+- `strategy` (enum: `in-place` | `isolated`, default: `in-place`): Deployment workspace strategy.
+- `workspacePath` (string, optional): Custom workspace directory for `isolated` strategy (defaults to `~/.deployra/workspaces/<project>`).
+- `concurrency` (number, default: `1`): Concurrent deployment execution limit.
+- `queueMode` (enum: `latest` | `fifo` | `reject`, default: `latest`): Queue behavior when new commits arrive.
+- `dirtyWorkspace` (enum: `reject` | `reset` | `stash`, default: `reject`): Handling uncommitted workspace changes.
+- `timeout` (string/number, default: `10m`): Maximum overall pipeline timeout.
+- `retry.attempts` (number, default: `2`): Retry count for failed step commands.
+- `retry.backoff` (string/number, default: `10s`): Delay between step retry attempts.
+- `commands.install` (array of strings): Dependency installation shell commands.
+- `commands.build` (array of strings): Application compilation/build shell commands.
+- `service.name` (string): Unitup systemd service name (defaults to `project.name`).
+- `service.action` (enum: `start` | `restart` | `reload` | `none`, default: `restart`): Action performed on service.
+- `ready` (object): Post-deployment readiness check specifications.
+- `rollback.enabled` (boolean, default: `true`): Auto-rollback trigger toggle.
 
 ---
 
-## Systemd Installation
+## Daemon & Service Management
 
-To install Gitship daemon as a systemd user service:
+To install Deployra daemon as a systemd user service:
 
 ```bash
-gitship service install
-gitship service start
-gitship service status
+deployra service install
+deployra service start
+deployra service status
 ```
 
 ---
 
 ## Security Best Practices
 
-1. **No Shell Injection**: Commands are spawned using explicit argument arrays (`execFile`/`spawn`).
-2. **Secret Redaction**: Environment secrets, bearer tokens, passwords, and private keys are automatically masked in log files.
-3. **Non-Root Execution**: Running Gitship directly as `root` is warned against. Dedicated deployment service accounts should be used.
-4. **Path Traversal Protection**: Project working tree paths are normalized and bounded.
+1. **Secret Masking**: Sensitive environment variables and secrets matching `KEY|TOKEN|SECRET|PASSWORD|AUTH` are automatically redacted from logs.
+2. **Safe Command Execution**: Commands run with argument arrays (`safeExec`) to prevent shell injection vulnerabilities.
+3. **Non-Root Execution**: Running Deployra directly as `root` is warned against. Dedicated deployment service accounts should be used.
 
 ---
 
 ## Troubleshooting
 
-- **Doctor Check**: Run `gitship doctor` to verify Git, SQLite permissions, systemd access, and remote connectivity.
-- **Inspect Logs**: Run `gitship logs <app>` to view step-level exit codes and tracebacks.
-- **Reset DB**: SQLite database is located at `~/.gitship/gitship.db` (or custom path set via `GITSHIP_DB_PATH`).
+- **Doctor Check**: Run `deployra doctor` to verify Git, SQLite permissions, systemd access, and remote connectivity.
+- **Inspect Logs**: Run `deployra logs <app>` to view step-level exit codes and tracebacks.
+- **Reset DB**: SQLite database is located at `~/.deployra/deployra.db` (or custom path set via `DEPLOYRA_DB_PATH`).
 
 ---
 
 ## License
 
-MIT © litepacks
+MIT © [litepacks](https://github.com/litepacks)

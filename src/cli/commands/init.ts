@@ -2,14 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import chalk from 'chalk';
 
-export function initCommand(targetPath = 'gitship.config.yaml'): void {
+export function initCommand(targetPath = 'deployra.config.yaml'): void {
   const resolved = path.resolve(targetPath);
   if (fs.existsSync(resolved)) {
     console.log(chalk.yellow(`Configuration file already exists at: ${resolved}`));
     return;
   }
 
-  const defaultContent = `# Gitship Configuration
+  const defaultContent = `# Deployra Configuration
 project:
   name: api
   path: /var/www/api
@@ -55,5 +55,5 @@ deploy:
 `;
 
   fs.writeFileSync(resolved, defaultContent, 'utf-8');
-  console.log(chalk.green(`✔ Initialized sample Gitship configuration at: ${resolved}`));
+  console.log(chalk.green(`✔ Initialized sample Deployra configuration at: ${resolved}`));
 }

@@ -1,5 +1,4 @@
 import path from 'node:path';
-import fs from 'node:fs';
 
 export function normalizePath(targetPath: string): string {
   return path.resolve(path.normalize(targetPath));
@@ -29,9 +28,10 @@ export function isRootUser(): boolean {
 }
 
 export function assertNonRootUser(allowRoot = false): void {
-  if (isRootUser() && !allowRoot) {
+  const isAllowed = allowRoot || process.env.DEPLOYRA_ALLOW_ROOT === 'true';
+  if (isRootUser() && !isAllowed) {
     throw new Error(
-      'Running Gitship directly as root is discouraged for security reasons. Use a dedicated service user or set GITSHIP_ALLOW_ROOT=true to override.',
+      'Running Deployra directly as root is discouraged for security reasons. Use a dedicated service user or set DEPLOYRA_ALLOW_ROOT=true to override.',
     );
   }
 }

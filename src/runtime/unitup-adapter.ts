@@ -1,13 +1,13 @@
 import {
-  startService,
-  stopService,
-  restartService,
   getServiceStatus,
   isSystemctlAvailable,
+  restartService,
+  startService,
+  stopService,
 } from 'unitup';
-import type { RuntimeManager, RuntimeStatus } from './runtime-manager.js';
-import { RuntimeError } from '../errors/gitship-error.js';
+import { RuntimeError } from '../errors/deployra-error.js';
 import { logger } from '../logging/logger.js';
+import type { RuntimeManager, RuntimeStatus } from './runtime-manager.js';
 
 export class UnitupAdapter implements RuntimeManager {
   private async isSystemdAvailable(): Promise<boolean> {
@@ -92,8 +92,8 @@ export class UnitupAdapter implements RuntimeManager {
         service,
         active: res?.activeState === 'active',
         subState: res?.subState,
-        mainPid: isNaN(parsedPid!) ? undefined : parsedPid,
-        restartCount: isNaN(parsedRestarts!) ? undefined : parsedRestarts,
+        mainPid: Number.isNaN(parsedPid!) ? undefined : parsedPid,
+        restartCount: Number.isNaN(parsedRestarts!) ? undefined : parsedRestarts,
       };
     } catch (err: any) {
       throw new RuntimeError(

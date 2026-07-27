@@ -1,16 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { GitClient } from '../git/git-client.js';
-import { UnitupAdapter } from '../runtime/unitup-adapter.js';
-import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
 import { RollbackManager } from '../deployment/rollback-manager.js';
-import { ProjectRepository } from '../storage/project-repository.js';
-import { DeploymentRepository } from '../storage/deployment-repository.js';
-import { StateRepository } from '../storage/state-repository.js';
-import { safeExec } from '../security/exec.js';
-import { logger } from '../logging/logger.js';
-import { GitshipError } from '../errors/gitship-error.js';
+import { DeployraError } from '../errors/deployra-error.js';
+import { GitClient } from '../git/git-client.js';
 import type { DeploymentJobPayload } from '../jobs/workmatic-engine.js';
+import { logger } from '../logging/logger.js';
+import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
+import { UnitupAdapter } from '../runtime/unitup-adapter.js';
+import { safeExec } from '../security/exec.js';
+import { DeploymentRepository } from '../storage/deployment-repository.js';
+import { ProjectRepository } from '../storage/project-repository.js';
+import { StateRepository } from '../storage/state-repository.js';
 
 export class DeploymentPipelineRunner {
   private gitClient = new GitClient();
@@ -46,7 +46,7 @@ export class DeploymentPipelineRunner {
       await this.runStep(deploymentId, 'acquire-lock', async () => {
         lockAcquired = this.stateRepo.acquireLock(projectName, deploymentId);
         if (!lockAcquired) {
-          throw new GitshipError(`Could not acquire deployment lock for project '${projectName}'`);
+          throw new DeployraError(`Could not acquire deployment lock for project '${projectName}'`);
         }
       });
 
@@ -78,8 +78,8 @@ export class DeploymentPipelineRunner {
         const dirty = await this.gitClient.isDirty(workingDir);
         if (dirty) {
           if (config.deploy.dirtyWorkspace === 'reject') {
-            throw new GitshipError(
-              `Repository at '${workingDir}' has uncommitted changes (dirtyWorkspace: reject)`,
+            throw new DeployraError(
+              `Dirty target repository workspace at '${workingDir}'. Commit or stash changes before deploying, or set deploy.dirtyWorkspace to 'reset'.`,
             );
           } else if (config.deploy.dirtyWorkspace === 'reset') {
             await this.gitClient.resetHard(workingDir, 'HEAD');
@@ -103,7 +103,7 @@ export class DeploymentPipelineRunner {
           config.source.branch,
         );
         if (!resolvedHead && !targetSha) {
-          throw new GitshipError(
+          throw new DeployraError(
             `Target SHA could not be resolved for branch '${config.source.branch}'`,
           );
         }

@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import parseYaml from 'yaml';
+import { ConfigValidationError } from '../errors/deployra-error.js';
 import { normalizeAndValidateConfig } from './schema.js';
-import { ConfigValidationError } from '../errors/gitship-error.js';
-import type { NormalizedGitshipConfig } from './types.js';
+import type { NormalizedDeployraConfig } from './types.js';
 
 export function findConfigFile(targetPath?: string): string {
   if (targetPath) {
@@ -15,11 +15,11 @@ export function findConfigFile(targetPath?: string): string {
   }
 
   const defaultLocations = [
-    path.resolve(process.cwd(), 'gitship.config.yaml'),
-    path.resolve(process.cwd(), 'gitship.config.yml'),
-    path.resolve(process.cwd(), 'gitship.config.json'),
-    path.resolve(process.env.HOME || '~', '.config/gitship/config.yaml'),
-    '/etc/gitship/config.yaml',
+    path.resolve(process.cwd(), 'deployra.config.yaml'),
+    path.resolve(process.cwd(), 'deployra.config.yml'),
+    path.resolve(process.cwd(), 'deployra.config.json'),
+    path.resolve(process.env.HOME || '~', '.config/deployra/config.yaml'),
+    '/etc/deployra/config.yaml',
   ];
 
   for (const loc of defaultLocations) {
@@ -29,11 +29,11 @@ export function findConfigFile(targetPath?: string): string {
   }
 
   throw new ConfigValidationError(
-    'No gitship.config.yaml file found in current directory or standard configuration paths.',
+    'No deployra.config.yaml file found in current directory or standard configuration paths.',
   );
 }
 
-export function loadConfig(configPath?: string): NormalizedGitshipConfig {
+export function loadConfig(configPath?: string): NormalizedDeployraConfig {
   const filePath = findConfigFile(configPath);
   const content = fs.readFileSync(filePath, 'utf-8');
 

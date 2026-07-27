@@ -1,12 +1,12 @@
-import chalk from 'chalk';
 import fs from 'node:fs';
+import chalk from 'chalk';
+import { loadConfig } from '../../config/parser.js';
+import { UnitupAdapter } from '../../runtime/unitup-adapter.js';
 import { safeExec } from '../../security/exec.js';
 import { getDatabasePath } from '../../storage/database.js';
-import { UnitupAdapter } from '../../runtime/unitup-adapter.js';
-import { loadConfig } from '../../config/parser.js';
 
 export async function doctorCommand(configPath?: string): Promise<void> {
-  console.log(chalk.bold('\n🔍 Running Gitship System Diagnostics...\n'));
+  console.log(chalk.bold('\n🔍 Running Deployra System Diagnostics...\n'));
 
   let checksPassed = 0;
   let checksFailed = 0;
@@ -48,7 +48,7 @@ export async function doctorCommand(configPath?: string): Promise<void> {
     const unitup = new UnitupAdapter();
     const status = await unitup.status('test-check');
     report('Unitup runtime adapter ready', true, status.subState || 'active');
-  } catch (err: any) {
+  } catch (_err: any) {
     report('Unitup runtime adapter ready', true, 'Fallback / simulation mode active');
   }
 

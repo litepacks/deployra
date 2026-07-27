@@ -1,11 +1,9 @@
-import http from 'node:http';
-import https from 'node:https';
-import net from 'node:net';
 import fs from 'node:fs';
+import net from 'node:net';
 import { performHealthCheck } from 'ready-checker';
+import type { IndividualCheckConfig, NormalizedDeployraConfig } from '../config/types.js';
+import { ReadinessError } from '../errors/deployra-error.js';
 import { safeExec } from '../security/exec.js';
-import { ReadinessError } from '../errors/gitship-error.js';
-import type { IndividualCheckConfig, NormalizedGitshipConfig } from '../config/types.js';
 
 export interface SingleCheckResult {
   type: string;
@@ -147,7 +145,7 @@ export class ReadyCheckerAdapter {
   }
 
   public async wait(
-    readyConfig: NormalizedGitshipConfig['deploy']['ready'],
+    readyConfig: NormalizedDeployraConfig['deploy']['ready'],
   ): Promise<ReadyCheckResult> {
     const startTime = Date.now();
     const { timeoutMs, intervalMs, mode, checks } = readyConfig;

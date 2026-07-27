@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import { WorkmaticEngine } from '../../jobs/workmatic-engine.js';
 import { DeploymentPipelineRunner } from '../../pipeline/pipeline-runner.js';
-import { SourceWatcher } from '../../watcher/source-watcher.js';
 import { closeDatabase } from '../../storage/database.js';
+import { SourceWatcher } from '../../watcher/source-watcher.js';
 
 export async function deployCommand(projectName: string): Promise<void> {
   const workmatic = new WorkmaticEngine();
