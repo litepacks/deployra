@@ -15,6 +15,7 @@ import { removeCommand } from './commands/remove.js';
 import { serviceCommand } from './commands/service.js';
 import { statsCommand } from './commands/stats.js';
 import { statusCommand } from './commands/status.js';
+import { uninstallCommand } from './commands/uninstall.js';
 import { upgradeCommand } from './commands/upgrade.js';
 import { watchCommand } from './commands/watch.js';
 
@@ -159,6 +160,15 @@ program
   .option('-f, --force', 'Force reinstall of the latest version')
   .action(async (options) => {
     await upgradeCommand(options);
+  });
+
+program
+  .command('uninstall')
+  .description('Completely uninstall Deployra, systemd daemon service, and data directory')
+  .option('-k, --keep-data', 'Preserve Deployra database and configuration directory (~/.deployra)')
+  .option('-p, --purge', 'Purge Deployra database and configuration directory (~/.deployra)')
+  .action(async (options) => {
+    await uninstallCommand(options);
   });
 
 program.parse(process.argv);

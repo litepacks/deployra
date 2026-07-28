@@ -54,6 +54,8 @@ export async function serviceCommand(
             command: process.execPath,
             args: [scriptPath, 'watch'],
             cwd: process.cwd(),
+            restartSec: '3s',
+            force: true,
           });
         } else {
           await createService({
@@ -61,6 +63,8 @@ export async function serviceCommand(
             command: 'deployra',
             args: ['watch'],
             cwd: process.cwd(),
+            restartSec: '3s',
+            force: true,
           });
         }
         console.log(chalk.green(`✔ Installed systemd service '${serviceName}' via Unitup.`));
