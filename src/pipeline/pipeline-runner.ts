@@ -114,30 +114,27 @@ export class DeploymentPipelineRunner {
         await this.gitClient.resetHard(workingDir, targetSha);
       });
 
-      // Step 6: install (with command retry if configured)
-      await this.runStep(deploymentId, 'install', async () => {
-        for (const cmdStr of config.deploy.commands.install) {
-          await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry);
-        }
-      });
+      // Step 6+: Execute all command steps dynamically (install, migrate, build, etc.)
+      for (const [stepName, cmdList] of Object.entries(config.deploy.commands)) {
+        if (Array.isArray(cmdList) && cmdList.length > 0) {
+          await this.runStep(deploymentId, stepName, async () => {
+            for (const cmdStr of cmdList) {
+              await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry);
+            }
 
-      // Step 7: build
-      await this.runStep(deploymentId, 'build', async () => {
-        for (const cmdStr of config.deploy.commands.build) {
-          await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry);
+            if (stepName === 'build' && isIsolated) {
+              logger.info(
+                `Syncing built artifacts from isolated workspace '${workingDir}' to target '${project.path}'`,
+                {
+                  project: projectName,
+                  deploymentId,
+                },
+              );
+              await this.syncIsolatedWorkspace(workingDir, project.path);
+            }
+          });
         }
-
-        if (isIsolated) {
-          logger.info(
-            `Syncing built artifacts from isolated workspace '${workingDir}' to target '${project.path}'`,
-            {
-              project: projectName,
-              deploymentId,
-            },
-          );
-          await this.syncIsolatedWorkspace(workingDir, project.path);
-        }
-      });
+      }
 
       // Step 8: service-action
       await this.runStep(deploymentId, 'service-action', async () => {

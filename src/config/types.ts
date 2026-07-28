@@ -66,6 +66,7 @@ export interface RollbackConfig {
 export interface DeployCommandsConfig {
   install?: string[];
   build?: string[];
+  [stepName: string]: string[] | undefined;
 }
 
 export interface DeployServiceConfig {
@@ -138,10 +139,7 @@ export interface NormalizedDeployraConfig {
       attempts: number;
       backoffMs: number;
     };
-    commands: {
-      install: string[];
-      build: string[];
-    };
+    commands: Record<string, string[]>;
     service: {
       name: string;
       action: ServiceAction;

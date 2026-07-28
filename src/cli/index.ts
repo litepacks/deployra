@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { addCommand } from './commands/add.js';
 import { cancelCommand } from './commands/cancel.js';
@@ -12,14 +15,38 @@ import { removeCommand } from './commands/remove.js';
 import { serviceCommand } from './commands/service.js';
 import { statsCommand } from './commands/stats.js';
 import { statusCommand } from './commands/status.js';
+import { upgradeCommand } from './commands/upgrade.js';
 import { watchCommand } from './commands/watch.js';
+
+function getVersion(): string {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    let dir = path.dirname(__filename);
+
+    for (let i = 0; i < 5; i++) {
+      const pkgPath = path.join(dir, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        if (pkg.name === 'deployra' && pkg.version) {
+          return pkg.version;
+        }
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // Fallback if filesystem read fails
+  }
+  return '0.0.8';
+}
 
 const program = new Command();
 
 program
   .name('deployra')
   .description('Lightweight, platform-independent VPS deployment orchestrator')
-  .version('1.0.0');
+  .version(getVersion());
 
 program
   .command('init [path]')
@@ -117,12 +144,21 @@ program
   });
 
 program
-  .command('service <action>')
+  .command('service [action]')
   .description(
-    'Manage Deployra daemon systemd service (install|start|stop|restart|status|uninstall)',
+    'Manage Deployra daemon systemd service (install | start | stop | restart | status | uninstall)',
   )
   .action(async (action) => {
     await serviceCommand(action as any);
+  });
+
+program
+  .command('upgrade')
+  .description('Check and upgrade Deployra CLI to the latest version')
+  .option('-c, --check', 'Check for updates without installing')
+  .option('-f, --force', 'Force reinstall of the latest version')
+  .action(async (options) => {
+    await upgradeCommand(options);
   });
 
 program.parse(process.argv);
