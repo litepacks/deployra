@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { safeExec } from '../src/security/exec.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
+import { createBrokenServer, BROKEN_SERVER_CODE_SNIPPET } from './fixtures/broken-server.js';
 import { createSampleServer } from './fixtures/sample-server.js';
 
 function getCLICommand(): { command: string; argsPrefix: string[] } {
@@ -174,4 +175,155 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       await fixtureServer.close();
     }
   }, 45000);
+
+  it('does not crash daemon when build command fails on broken server code update and recovers on next valid commit', async () => {
+    const { command, argsPrefix } = getCLICommand();
+
+    // 1. Start live sample Node.js HTTP server fixture on port 3996
+    const fixtureServer = createSampleServer('v1.0.0', 3996);
+    await new Promise<void>((resolve) => fixtureServer.server.listen(3996, '127.0.0.1', resolve));
+
+    // 2. Create .deployra.json config inside workDir with build script command
+    const configPath = path.join(workDir, '.deployra.json');
+    const configContent = JSON.stringify(
+      {
+        project: {
+          name: 'broken-code-app',
+          path: workDir,
+        },
+        source: {
+          remote: 'origin',
+          branch: 'main',
+        },
+        watch: {
+          intervalMs: 1000,
+        },
+        deploy: {
+          strategy: 'in-place',
+          commands: {
+            install: ['echo "Installing..."'],
+            build: ['sh build.sh'],
+          },
+          service: {
+            name: 'broken-code-app',
+            action: 'none',
+          },
+          ready: {
+            url: `${fixtureServer.url}/health`,
+            timeout: '5s',
+            interval: '500ms',
+          },
+        },
+      },
+      null,
+      2,
+    );
+    fs.writeFileSync(configPath, configContent);
+
+    // 3. Spawn real Deployra watch daemon as background child process
+    const daemonProcess = spawn(command, [...argsPrefix, 'watch'], {
+      env: {
+        ...process.env,
+        DEPLOYRA_DB_PATH: path.join(tmpDir, 'deployra.db'),
+        WORKMATIC_DB_PATH: path.join(tmpDir, 'workmatic.db'),
+      },
+      stdio: 'pipe',
+    });
+
+    let daemonLogs = '';
+    daemonProcess.stdout.on('data', (d) => {
+      daemonLogs += d.toString();
+    });
+    daemonProcess.stderr.on('data', (d) => {
+      daemonLogs += d.toString();
+    });
+
+    await new Promise((r) => setTimeout(r, 1500));
+
+    try {
+      // 4. Add project via CLI
+      await safeExec(command, [...argsPrefix, 'add', '.'], {
+        cwd: workDir,
+        env: {
+          ...process.env,
+          DEPLOYRA_DB_PATH: path.join(tmpDir, 'deployra.db'),
+          WORKMATIC_DB_PATH: path.join(tmpDir, 'workmatic.db'),
+        },
+      });
+
+      // 5. Push BROKEN server code snippet (build.sh contains syntax error & exit 1)
+      fs.writeFileSync(path.join(workDir, 'server.js'), BROKEN_SERVER_CODE_SNIPPET);
+      fs.writeFileSync(path.join(workDir, 'build.sh'), 'echo "Syntax Error in Server Code" && exit 1');
+      await safeExec('git', ['add', '.'], { cwd: workDir });
+      await safeExec('git', ['commit', '-m', 'Broken server code commit'], { cwd: workDir });
+      await safeExec('git', ['push', 'origin', 'HEAD:main'], { cwd: workDir });
+
+      // 6. Trigger manual deployment for broken code
+      await safeExec(command, [...argsPrefix, 'deploy', 'broken-code-app'], {
+        env: {
+          ...process.env,
+          DEPLOYRA_DB_PATH: path.join(tmpDir, 'deployra.db'),
+          WORKMATIC_DB_PATH: path.join(tmpDir, 'workmatic.db'),
+        },
+      });
+
+      // 7. Poll database for failed/rolled_back status
+      const depRepo = new DeploymentRepository();
+      let failedStatus = '';
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const deps = depRepo.getDeploymentsByProject('broken-code-app');
+        const latest = deps[0];
+        if (latest && (latest.status === 'failed' || latest.status === 'rolled_back')) {
+          failedStatus = latest.status;
+          break;
+        }
+      }
+
+      expect(['failed', 'rolled_back']).toContain(failedStatus);
+
+      // 8. VERIFY DAEMON IS STILL ALIVE & RUNNING (has not crashed)
+      expect(daemonProcess.exitCode).toBeNull();
+      expect(daemonProcess.killed).toBe(false);
+
+      // 9. Fix broken server code, commit & push valid update
+      fs.writeFileSync(path.join(workDir, 'server.js'), 'const version = "v2.0.0-fixed";');
+      fs.writeFileSync(path.join(workDir, 'build.sh'), 'echo "Fixed Build OK"');
+      await safeExec('git', ['add', '.'], { cwd: workDir });
+      await safeExec('git', ['commit', '-m', 'Fix broken server code'], { cwd: workDir });
+      await safeExec('git', ['push', 'origin', 'HEAD:main'], { cwd: workDir });
+
+      // 10. Trigger deployment again
+      await safeExec(command, [...argsPrefix, 'deploy', 'broken-code-app'], {
+        env: {
+          ...process.env,
+          DEPLOYRA_DB_PATH: path.join(tmpDir, 'deployra.db'),
+          WORKMATIC_DB_PATH: path.join(tmpDir, 'workmatic.db'),
+        },
+      });
+
+      // 11. Poll database for success status
+      let recoveredStatus = '';
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const deps = depRepo.getDeploymentsByProject('broken-code-app');
+        const latest = deps[0];
+        if (latest && latest.status === 'success') {
+          recoveredStatus = latest.status;
+          break;
+        }
+      }
+
+      if (recoveredStatus !== 'success') {
+        console.error('DAEMON LOGS ON RECOVERY FAILURE:\n', daemonLogs);
+      }
+      expect(recoveredStatus).toBe('success');
+
+      // 12. Verify daemon is still running
+      expect(daemonProcess.exitCode).toBeNull();
+    } finally {
+      daemonProcess.kill('SIGTERM');
+      await fixtureServer.close();
+    }
+  }, 60000);
 });
