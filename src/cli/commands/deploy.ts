@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { WorkmaticEngine } from '../../jobs/workmatic-engine.js';
-import { DeploymentPipelineRunner } from '../../pipeline/pipeline-runner.js';
+import { isDaemonRunning } from '../../runtime/daemon-check.js';
 import { closeDatabase } from '../../storage/database.js';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
 import { SourceWatcher } from '../../watcher/source-watcher.js';
@@ -11,6 +11,15 @@ export async function deployCommand(projectName: string): Promise<void> {
   const watcher = new SourceWatcher(workmatic);
 
   try {
+    const daemonActive = await isDaemonRunning();
+    if (!daemonActive) {
+      console.log(
+        chalk.yellow(
+          `⚠ Warning: Deployra daemon ('deployra-daemon') is not running. Deployment will remain queued until the daemon is started.`,
+        ),
+      );
+    }
+
     console.log(chalk.bold(`Triggering manual deployment for '${projectName}'...`));
     const depId = await watcher.checkProject(projectName, 'manual');
 

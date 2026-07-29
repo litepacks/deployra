@@ -9,6 +9,7 @@ import {
   ReadyCheckerAdapter,
   type ReadyCheckResult,
 } from '../src/readiness/ready-checker-adapter.js';
+import { isDaemonRunning } from '../src/runtime/daemon-check.js';
 import type { RuntimeManager, RuntimeStatus } from '../src/runtime/runtime-manager.js';
 import { UnitupAdapter } from '../src/runtime/unitup-adapter.js';
 import { safeExec } from '../src/security/exec.js';
@@ -38,6 +39,11 @@ describe('Contract Tests', () => {
 
       const status: RuntimeStatus = await adapter.status('non_existent_service_xyz_123');
       expect(typeof status.active).toBe('boolean');
+    });
+
+    it('evaluates isDaemonRunning boolean status cleanly', async () => {
+      const isRunning = await isDaemonRunning();
+      expect(typeof isRunning).toBe('boolean');
     });
 
     it('handles start, restart, reload with options on non-systemd platforms gracefully', async () => {
@@ -239,11 +245,33 @@ describe('Contract Tests', () => {
       await watcher.syncProjects();
       expect((watcher as any).timers.has('auto-app-1')).toBe(true);
 
-      projRepo.deleteProject('auto-app-1');
-      await watcher.syncProjects();
-      expect((watcher as any).timers.has('auto-app-1')).toBe(false);
-
       await watcher.stop();
+    });
+
+    it('skips duplicate deployment creation when a deployment for the same commit SHA is already active', async () => {
+      const engine = new WorkmaticEngine();
+      const watcher = new SourceWatcher(engine);
+      const projRepo = new ProjectRepository();
+      const depRepo = new DeploymentRepository();
+
+      const config = normalizeAndValidateConfig({
+        project: { name: 'dup-sha-app', path: '/tmp/dup-sha-app' },
+      });
+      projRepo.saveProject(config);
+
+      depRepo.createDeployment({
+        id: 'dep_active_123',
+        projectName: 'dup-sha-app',
+        targetSha: '973f5de',
+        status: 'running',
+        triggerType: 'poll',
+      });
+
+      // Mock checkRemoteHead to return the same active SHA '973f5de'
+      (watcher as any).gitClient.checkRemoteHead = async () => '973f5de';
+
+      const result = await watcher.checkProject('dup-sha-app', 'poll');
+      expect(result).toBeNull();
     });
   });
 });

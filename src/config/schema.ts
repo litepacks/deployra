@@ -79,9 +79,7 @@ export const deployraConfigSchema = z.object({
           backoff: durationSchema.default('10s'),
         })
         .default({ attempts: 2, backoff: '10s' }),
-      commands: z
-        .record(z.string(), z.array(z.string()))
-        .default({ install: [], build: [] }),
+      commands: z.record(z.string(), z.array(z.string())).default({ install: [], build: [] }),
       service: z
         .object({
           name: z.string(),

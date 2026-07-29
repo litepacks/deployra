@@ -96,12 +96,31 @@ export class SourceWatcher {
         return null;
       }
 
-      // Prevent re-deploying same commit SHA unless manual trigger
-      if (triggerType === 'poll' && remoteSha === proj.lastSeenSha) {
-        logger.debug(`No change detected for project '${projectName}' (SHA: ${remoteSha})`, {
-          project: projectName,
-        });
-        return null;
+      // Helper for SHA comparison (handles full 40-char SHA vs short 7-char SHA)
+      const isSameSha = (sha1?: string, sha2?: string) => {
+        if (!sha1 || !sha2) return false;
+        return sha1 === sha2 || sha1.startsWith(sha2) || sha2.startsWith(sha1);
+      };
+
+      const activeDeps = this.deploymentRepo.getActiveDeployments(projectName);
+
+      // Prevent re-deploying same commit SHA on polling if unchanged or already active
+      if (triggerType === 'poll') {
+        if (isSameSha(remoteSha, proj.lastSeenSha)) {
+          logger.debug(`No change detected for project '${projectName}' (SHA: ${remoteSha})`, {
+            project: projectName,
+          });
+          return null;
+        }
+
+        const existingSameShaDep = activeDeps.find((dep) => isSameSha(dep.targetSha, remoteSha));
+        if (existingSameShaDep) {
+          logger.info(
+            `Deployment #${existingSameShaDep.id} for project '${projectName}' (target SHA: ${remoteSha}) is already ${existingSameShaDep.status}. Skipping duplicate deployment creation.`,
+            { project: projectName, deploymentId: existingSameShaDep.id },
+          );
+          return null;
+        }
       }
 
       this.projectRepo.updateLastSeenSha(projectName, remoteSha);
@@ -115,7 +134,6 @@ export class SourceWatcher {
 
       // Handle Queue modes: latest, fifo, reject
       const queueMode = proj.config.deploy.queueMode;
-      const activeDeps = this.deploymentRepo.getActiveDeployments(projectName);
 
       if (activeDeps.length > 0) {
         if (queueMode === 'reject') {

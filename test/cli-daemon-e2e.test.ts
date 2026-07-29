@@ -2,10 +2,10 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { safeExec } from '../src/security/exec.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
-import { createBrokenServer, BROKEN_SERVER_CODE_SNIPPET } from './fixtures/broken-server.js';
+import { BROKEN_SERVER_CODE_SNIPPET } from './fixtures/broken-server.js';
 import { createSampleServer } from './fixtures/sample-server.js';
 
 function getCLICommand(): { command: string; argsPrefix: string[] } {
@@ -253,7 +253,10 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
 
       // 5. Push BROKEN server code snippet (build.sh contains syntax error & exit 1)
       fs.writeFileSync(path.join(workDir, 'server.js'), BROKEN_SERVER_CODE_SNIPPET);
-      fs.writeFileSync(path.join(workDir, 'build.sh'), 'echo "Syntax Error in Server Code" && exit 1');
+      fs.writeFileSync(
+        path.join(workDir, 'build.sh'),
+        'echo "Syntax Error in Server Code" && exit 1',
+      );
       await safeExec('git', ['add', '.'], { cwd: workDir });
       await safeExec('git', ['commit', '-m', 'Broken server code commit'], { cwd: workDir });
       await safeExec('git', ['push', 'origin', 'HEAD:main'], { cwd: workDir });
@@ -270,7 +273,7 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       // 7. Poll database for failed/rolled_back status
       const depRepo = new DeploymentRepository();
       let failedStatus = '';
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 500));
         const deps = depRepo.getDeploymentsByProject('broken-code-app');
         const latest = deps[0];

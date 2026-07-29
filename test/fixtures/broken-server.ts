@@ -11,7 +11,12 @@ export function createBrokenServer(port = 3998): BrokenServerInstance {
   const server = http.createServer((_req, res) => {
     // Intentionally return 500 Internal Server Error to simulate broken server code
     res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'error', error: 'Internal Server Error: Server crashed due to syntax or runtime bug' }));
+    res.end(
+      JSON.stringify({
+        status: 'error',
+        error: 'Internal Server Error: Server crashed due to syntax or runtime bug',
+      }),
+    );
   });
 
   return {

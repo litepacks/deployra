@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { loadConfig } from '../../config/parser.js';
 import { WorkmaticEngine } from '../../jobs/workmatic-engine.js';
+import { isDaemonRunning } from '../../runtime/daemon-check.js';
 import { closeDatabase } from '../../storage/database.js';
 import { ProjectRepository } from '../../storage/project-repository.js';
 import { SourceWatcher } from '../../watcher/source-watcher.js';
@@ -16,6 +17,15 @@ export async function addCommand(configPath?: string): Promise<void> {
         `✔ Added project '${saved.name}' (${saved.remote}/${saved.branch}) pointing to '${saved.path}'`,
       ),
     );
+
+    const daemonActive = await isDaemonRunning();
+    if (!daemonActive) {
+      console.log(
+        chalk.yellow(
+          `⚠ Warning: Deployra daemon ('deployra-daemon') is not running. Background monitoring/deployments will not process automatically until started.`,
+        ),
+      );
+    }
 
     // Automatically trigger initial check & queue deployment
     const workmatic = new WorkmaticEngine();

@@ -30,12 +30,12 @@ export class RollbackManager {
       await this.gitClient.cleanUntracked(data.projectPath);
 
       // 2. Re-run install and build commands if configured
-      for (const cmdStr of data.config.deploy.commands.install) {
+      for (const cmdStr of data.config.deploy.commands.install || []) {
         const parts = cmdStr.split(' ');
         await safeExec(parts[0], parts.slice(1), { cwd: data.projectPath });
       }
 
-      for (const cmdStr of data.config.deploy.commands.build) {
+      for (const cmdStr of data.config.deploy.commands.build || []) {
         const parts = cmdStr.split(' ');
         await safeExec(parts[0], parts.slice(1), { cwd: data.projectPath });
       }
