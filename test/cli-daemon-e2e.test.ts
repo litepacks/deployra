@@ -200,6 +200,10 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
         },
         deploy: {
           strategy: 'in-place',
+          retry: {
+            attempts: 0,
+            backoff: '100ms',
+          },
           commands: {
             install: ['echo "Installing..."'],
             build: ['sh build.sh'],
@@ -276,9 +280,9 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 500));
         const deps = depRepo.getDeploymentsByProject('broken-code-app');
-        const latest = deps[0];
-        if (latest && (latest.status === 'failed' || latest.status === 'rolled_back')) {
-          failedStatus = latest.status;
+        const failedDep = deps.find((d) => d.status === 'failed' || d.status === 'rolled_back');
+        if (failedDep) {
+          failedStatus = failedDep.status;
           break;
         }
       }

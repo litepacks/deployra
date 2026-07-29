@@ -201,7 +201,7 @@ export class DeploymentRepository {
   public getLatestDeployment(projectName: string): DeploymentRecord | null {
     const db = getDatabase();
     const row = db
-      .prepare(`SELECT id FROM deployments WHERE project_name = ? ORDER BY created_at DESC LIMIT 1`)
+      .prepare(`SELECT id FROM deployments WHERE project_name = ? ORDER BY created_at DESC, id DESC LIMIT 1`)
       .get(projectName) as any;
     return row ? this.getDeployment(row.id) : null;
   }
@@ -209,7 +209,7 @@ export class DeploymentRepository {
   public getDeploymentsByProject(projectName: string, limit = 20): DeploymentRecord[] {
     const db = getDatabase();
     const rows = db
-      .prepare(`SELECT id FROM deployments WHERE project_name = ? ORDER BY created_at DESC LIMIT ?`)
+      .prepare(`SELECT id FROM deployments WHERE project_name = ? ORDER BY created_at DESC, id DESC LIMIT ?`)
       .all(projectName, limit) as any[];
     return rows.map((r) => this.getDeployment(r.id)!);
   }
