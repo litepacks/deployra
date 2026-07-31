@@ -187,9 +187,9 @@ export class DeploymentPipelineRunner {
 
       this.deploymentRepo.updateStatus(deploymentId, 'failed', err.message);
 
-      // Trigger rollback if previous successful SHA exists and rollback enabled
+      // Trigger rollback if previous successful SHA exists, lock was acquired, and rollback enabled
       const prevSha = previousSha || project.lastSuccessfulSha;
-      if (config.deploy.rollback.enabled && prevSha && prevSha !== targetSha) {
+      if (lockAcquired && config.deploy.rollback.enabled && prevSha && prevSha !== targetSha) {
         try {
           this.deploymentRepo.updateStatus(deploymentId, 'rolling_back');
           await this.rollbackManager.rollback({

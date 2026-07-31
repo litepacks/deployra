@@ -9,6 +9,7 @@ import { safeExec } from '../src/security/exec.js';
 import { closeDatabase, resetDatabase } from '../src/storage/database.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
 import { ProjectRepository } from '../src/storage/project-repository.js';
+import { StateRepository } from '../src/storage/state-repository.js';
 import { SourceWatcher } from '../src/watcher/source-watcher.js';
 import { createSampleServer } from './fixtures/sample-server.js';
 
@@ -362,4 +363,62 @@ describe('Deployra End-to-End (E2E) Pipeline', () => {
       await fixtureServer.close();
     }
   }, 45000);
+
+  it('prevents rollback and stops execution immediately when acquire-lock fails', async () => {
+    const projRepo = new ProjectRepository();
+    const depRepo = new DeploymentRepository();
+    const stateRepo = new StateRepository();
+
+    const config = normalizeAndValidateConfig({
+      project: {
+        name: 'lock-test-app',
+        path: targetPath,
+      },
+      source: {
+        remote: 'origin',
+        branch: 'main',
+      },
+      deploy: {
+        strategy: 'in-place',
+        rollback: { enabled: true },
+        commands: {
+          install: ['echo "Should not run install"'],
+          build: ['echo "Should not run build"'],
+        },
+        service: { name: 'lock-test-app', action: 'none' },
+      },
+    });
+
+    projRepo.saveProject(config);
+    projRepo.updateLastSuccessfulSha('lock-test-app', 'sha_old_123');
+
+    // Simulate an active lock held by another process/deployment
+    stateRepo.acquireLock('lock-test-app', 'other_dep_123');
+
+    const runner = new DeploymentPipelineRunner();
+    const dep = depRepo.createDeployment({
+      id: 'dep_lock_fail_1',
+      projectName: 'lock-test-app',
+      targetSha: 'sha_new_456',
+      previousSha: 'sha_old_123',
+      triggerType: 'manual',
+    });
+
+    await runner.runDeployment({
+      deploymentId: dep.id,
+      projectName: 'lock-test-app',
+      targetSha: 'sha_new_456',
+      previousSha: 'sha_old_123',
+    });
+
+    const result = depRepo.getDeployment(dep.id);
+    expect(result?.status).toBe('failed');
+    expect(result?.error).toContain('Could not acquire deployment lock');
+
+    const lockStep = result?.steps.find((s) => s.stepName === 'acquire-lock');
+    expect(lockStep?.status).toBe('failed');
+
+    const installStep = result?.steps.find((s) => s.stepName === 'install');
+    expect(installStep?.status).toBe('pending');
+  });
 });
