@@ -16,13 +16,15 @@ graph TD
         GitRemote["Git Repository (GitHub, GitLab, Self-hosted)"]
     end
 
-    subgraph WatcherEngine["Deployra Watcher Daemon"]
+    subgraph WatcherEngine["Deployra Watcher & Queue Engine"]
         GitWatcher["Git Poller (git ls-remote)"]
-        WorkmaticQueue["Workmatic Engine (SQLite Queue & Concurrency Lock)"]
+        WorkmaticQueue["Workmatic SQLite Queue"]
+        QueuePolicy{"Queue Mode Policy (latest / fifo / reject)"}
+        LockManager["Project Lock Manager (Concurrency = 1)"]
     end
 
     subgraph PipelineEngine["Deployment Pipeline"]
-        GitSync["Git Sync / Workspace Update"]
+        GitSync["Git Sync / Workspace Strategy (in-place / isolated)"]
         InstallStep["Install Commands"]
         BuildStep["Build Commands"]
         SystemdService["Unitup Engine (Systemd Service Manager)"]
@@ -34,8 +36,10 @@ graph TD
     end
 
     GitRemote -->|"Poll SHA Changes"| GitWatcher
-    GitWatcher -->|"Enqueue Job"| WorkmaticQueue
-    WorkmaticQueue -->|"Acquire Lock"| GitSync
+    GitWatcher -->|"SHA Deduplication & Trigger"| WorkmaticQueue
+    WorkmaticQueue --> QueuePolicy
+    QueuePolicy -->|"Acquire Project Lock"| LockManager
+    LockManager -->|"Execute Job"| GitSync
     GitSync --> InstallStep
     InstallStep --> BuildStep
     BuildStep --> SystemdService
@@ -206,13 +210,35 @@ deployra watch
 
 When a new deployment is triggered while another deployment is currently active, Deployra uses an embedded Workmatic job queue and SQLite project locking to guarantee safety:
 
-1. **Project Locking (`acquire-lock`)**: Each deployment acquires an atomic project lock before executing workspace or git operations, preventing concurrent build conflicts.
-2. **Execution Queue (`concurrency: 1`)**: Deployments for a project are queued and processed sequentially.
-3. **Queue Modes (`deploy.queueMode`)**:
+```mermaid
+graph TD
+    Trigger["Deployment Trigger (Git SHA / Manual)"] --> DedupeCheck{"SHA Deduplication Check"}
+    
+    DedupeCheck -->|"Identical Active or Queued SHA"| Skip["Skip Duplicate Deployment"]
+    DedupeCheck -->|"New Commit SHA"| LockCheck{"Project Lock Active? (Concurrency = 1)"}
+    
+    LockCheck -->|"No (Idle)"| AcquireLock["Acquire Project Lock (SQLite)"]
+    LockCheck -->|"Yes (Deployment Active)"| QueueModeDecision{"Check deploy.queueMode"}
+    
+    QueueModeDecision -->|"latest (Default)"| CancelPending["Cancel Pending Jobs & Enqueue Latest SHA"]
+    QueueModeDecision -->|"fifo"| FIFOEnqueue["Enqueue to Workmatic FIFO Queue"]
+    QueueModeDecision -->|"reject"| RejectDeploy["Reject Incoming Request"]
+    
+    AcquireLock --> RunPipeline["Execute Deployment Pipeline"]
+    CancelPending --> WaitTurn["Wait for Active Job Completion"]
+    FIFOEnqueue --> WaitTurn
+    WaitTurn -->|"Job Finished & Lock Released"| AcquireLock
+    
+    RunPipeline --> ReleaseLock["Release Lock & Process Next Queue Item"]
+```
+
+1. **SHA Deduplication**: Identical commit SHAs currently active or queued are skipped automatically to prevent redundant builds.
+2. **Project Locking (`acquire-lock`)**: Each deployment acquires an atomic project lock before executing workspace or git operations, preventing concurrent build conflicts.
+3. **Execution Queue (`concurrency: 1`)**: Deployments for a project are queued and processed sequentially.
+4. **Queue Modes (`deploy.queueMode`)**:
    - **`latest`** *(default)*: When a new commit is detected while a deployment is active, older pending/queued deployments are automatically cancelled and replaced by the newest commit.
    - **`fifo`**: All deployment requests are queued in First-In, First-Out order and executed one after another.
    - **`reject`**: If a deployment is currently running or queued, any incoming deployment requests are rejected immediately.
-4. **SHA Deduplication**: Identical commit SHAs currently active or queued are skipped automatically to prevent redundant builds.
 
 ### Multi-Project Performance & Polling Safety
 
