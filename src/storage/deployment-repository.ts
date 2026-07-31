@@ -140,7 +140,7 @@ export class DeploymentRepository {
           completed_at = COALESCE(?, completed_at),
           duration = COALESCE(?, duration),
           exit_code = COALESCE(?, exit_code),
-          error = COALESCE(?, error)
+          error = ?
       WHERE id = ?
     `).run(
       update.status,

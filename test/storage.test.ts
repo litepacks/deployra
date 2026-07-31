@@ -65,8 +65,23 @@ describe('Storage & Repository Tests', () => {
     expect(dep.steps.length).toBe(11);
 
     depRepo.updateStatus('dep_test_123', 'running');
-    const updated = depRepo.getDeployment('dep_test_123');
-    expect(updated?.status).toBe('running');
+    depRepo.updateStep('dep_test_123', 'acquire-lock', {
+      status: 'failed',
+      error: 'Could not acquire deployment lock for project',
+    });
+    let updated = depRepo.getDeployment('dep_test_123');
+    const lockStepFailed = updated?.steps.find((s) => s.stepName === 'acquire-lock');
+    expect(lockStepFailed?.status).toBe('failed');
+    expect(lockStepFailed?.error).toBe('Could not acquire deployment lock for project');
+
+    depRepo.updateStep('dep_test_123', 'acquire-lock', {
+      status: 'success',
+      duration: 1,
+    });
+    updated = depRepo.getDeployment('dep_test_123');
+    const lockStepSuccess = updated?.steps.find((s) => s.stepName === 'acquire-lock');
+    expect(lockStepSuccess?.status).toBe('success');
+    expect(lockStepSuccess?.error).toBeUndefined();
   });
 
   it('calculates deployment statistics correctly', () => {

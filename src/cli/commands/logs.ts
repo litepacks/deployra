@@ -45,7 +45,7 @@ export function logsCommand(
 
     const durationStr = step.duration ? chalk.gray(`(${step.duration}ms)`) : '';
     console.log(`${statusSymbol} Step: ${chalk.bold(step.stepName)} ${durationStr}`);
-    if (step.error) {
+    if (step.status === 'failed' && step.error) {
       console.log(`   ${chalk.red('Error:')} ${maskSecrets(step.error)}`);
     }
   }
