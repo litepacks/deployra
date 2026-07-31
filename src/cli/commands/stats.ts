@@ -11,7 +11,9 @@ export function statsCommand(projectName?: string): void {
   const depRepo = new DeploymentRepository();
 
   const projects = projRepo.getAllProjects();
-  const targetProjects = targetProject ? projects.filter((p) => p.name === targetProject) : projects;
+  const targetProjects = targetProject
+    ? projects.filter((p) => p.name === targetProject)
+    : projects;
 
   if (targetProject && targetProjects.length === 0) {
     console.log(chalk.yellow(`Project '${targetProject}' not found in Deployra registry.`));
@@ -22,7 +24,9 @@ export function statsCommand(projectName?: string): void {
   const successRate = stats.total > 0 ? ((stats.success / stats.total) * 100).toFixed(1) : '0.0';
 
   console.log(
-    chalk.bold(`\n📊 Deployra Deployment Statistics${targetProject ? ` (${targetProject})` : ''}:\n`),
+    chalk.bold(
+      `\n📊 Deployra Deployment Statistics${targetProject ? ` (${targetProject})` : ''}:\n`,
+    ),
   );
 
   const table = new Table({

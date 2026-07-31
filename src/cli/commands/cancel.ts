@@ -37,7 +37,9 @@ export function cancelCommand(target?: string): void {
       ),
     );
   } catch (err: any) {
-    console.error(chalk.red(`✖ Failed to cancel deployment '${targetProjectOrId}': ${err.message}`));
+    console.error(
+      chalk.red(`✖ Failed to cancel deployment '${targetProjectOrId}': ${err.message}`),
+    );
     process.exit(1);
   } finally {
     closeDatabase();

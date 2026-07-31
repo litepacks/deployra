@@ -319,7 +319,9 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       for (let i = 0; i < 80; i++) {
         await new Promise((r) => setTimeout(r, 500));
         const deps = depRepo.getDeploymentsByProject('broken-code-app');
-        const successDep = deps.find((d) => d.targetSha !== failedDep?.targetSha && d.status === 'success');
+        const successDep = deps.find(
+          (d) => d.targetSha !== failedDep?.targetSha && d.status === 'success',
+        );
         if (successDep) {
           recoveredStatus = successDep.status;
           break;

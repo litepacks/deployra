@@ -70,7 +70,10 @@ export function loadConfig(configPath?: string): NormalizedDeployraConfig {
   return normalizeAndValidateConfig(parsed);
 }
 
-export function resolveProjectName(projectName?: string, cwd: string = process.cwd()): string | undefined {
+export function resolveProjectName(
+  projectName?: string,
+  cwd: string = process.cwd(),
+): string | undefined {
   if (projectName && projectName.trim()) {
     return projectName.trim();
   }
