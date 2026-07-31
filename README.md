@@ -2,22 +2,49 @@
 
 Lightweight, platform-independent & language-agnostic VPS deployment orchestrator.
 
-Deployra is 100% language and framework independent. Whether your application is built with **Node.js, Go, Python, Rust, PHP, Java, Ruby, Docker binaries, or static HTML**, Deployra automatically monitors remote Git repositories, queues background deployments via an embedded execution engine (**Workmatic**), manages systemd service lifecycles via **Unitup**, verifies application post-deploy readiness via **Ready-checker**, and executes automated rollbacks on failure.
+## What is Deployra?
+
+Deployra is a 100% language and framework-independent VPS deployment orchestrator. Whether your application is built with **Node.js, Go, Python, Rust, PHP, Java, Ruby, Docker binaries, or static HTML**, Deployra automatically monitors remote Git repositories, queues background deployments via an embedded execution engine (**Workmatic**), manages systemd service lifecycles via **Unitup**, verifies application post-deploy readiness via **Ready-checker**, and executes automated rollbacks on failure.
 
 ---
 
 ## Architecture
 
-```text
-Remote Git repository
-        ↓
-Deployra watcher
-        ↓
-Deployment pipeline
-        ↓
-Systemd service
-        ↓
-Readiness verification
+```mermaid
+graph TD
+    subgraph Remote["Remote Infrastructure"]
+        GitRemote["Git Repository (GitHub, GitLab, Self-hosted)"]
+    end
+
+    subgraph WatcherEngine["Deployra Watcher Daemon"]
+        GitWatcher["Git Poller (git ls-remote)"]
+        WorkmaticQueue["Workmatic Engine (SQLite Queue & Concurrency Lock)"]
+    end
+
+    subgraph PipelineEngine["Deployment Pipeline"]
+        GitSync["Git Sync / Workspace Update"]
+        InstallStep["Install Commands"]
+        BuildStep["Build Commands"]
+        SystemdService["Unitup Engine (Systemd Service Manager)"]
+        HealthCheck["Ready-Checker Engine (HTTP, TCP, Proc Verification)"]
+    end
+
+    subgraph RecoveryEngine["Failure Recovery"]
+        RollbackEngine["Auto Rollback Engine (Revert SHA & Service Restart)"]
+    end
+
+    GitRemote -->|"Poll SHA Changes"| GitWatcher
+    GitWatcher -->|"Enqueue Job"| WorkmaticQueue
+    WorkmaticQueue -->|"Acquire Lock"| GitSync
+    GitSync --> InstallStep
+    InstallStep --> BuildStep
+    BuildStep --> SystemdService
+    SystemdService --> HealthCheck
+    HealthCheck -->|"Success"| Success["Deployment Completed"]
+    HealthCheck -->|"Failure"| RollbackEngine
+    BuildStep -->|"Failure"| RollbackEngine
+    SystemdService -->|"Failure"| RollbackEngine
+    RollbackEngine -->|"Revert Workspace & Restart"| SystemdService
 ```
 
 > [!NOTE]
