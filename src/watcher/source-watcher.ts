@@ -64,13 +64,17 @@ export class SourceWatcher {
     }
 
     // Add watchers for newly registered projects
+    let index = 0;
     for (const proj of allProjects) {
       if (!this.timers.has(proj.name)) {
         logger.info(
           `Started monitoring project '${proj.name}' (${proj.remote}/${proj.branch}) every ${proj.config.watch.intervalMs}ms`,
           { project: proj.name },
         );
-        this.scheduleNextCheck(proj.name, 0, 0);
+        // Stagger initial check (e.g. 0ms, 250ms, 500ms...) to avoid thundering herd on startup
+        const initialDelay = index * 250;
+        this.scheduleNextCheck(proj.name, 0, initialDelay);
+        index++;
       }
     }
   }
@@ -190,6 +194,11 @@ export class SourceWatcher {
     if (!proj) return;
 
     let baseInterval = initialDelayMs !== undefined ? initialDelayMs : proj.config.watch.intervalMs;
+
+    // Apply small desynchronization jitter (+0..500ms) to prevent lockstep timer alignment across projects
+    if (initialDelayMs === undefined && errorCount === 0) {
+      baseInterval += Math.floor(Math.random() * 500);
+    }
 
     // Apply exponential backoff with jitter on consecutive errors
     if (errorCount > 0) {

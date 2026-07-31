@@ -1,5 +1,4 @@
-import { describe, expect, it } from 'vitest';
-import { maskSecrets } from '../src/logging/masker.js';
+import { maskSecrets, redactObject } from '../src/logging/masker.js';
 import { assertSafePath } from '../src/security/path-validator.js';
 
 describe('Security & Masker Tests', () => {
@@ -16,6 +15,18 @@ describe('Security & Masker Tests', () => {
     const key = `-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----`;
     const masked = maskSecrets(key);
     expect(masked).toBe('[REDACTED PRIVATE KEY]');
+  });
+
+  it('redacts secret properties from structured objects using @visulima/redact', () => {
+    const data = {
+      user: 'admin',
+      password: 'super_secret_password',
+      token: 'bearer_token_123',
+    };
+    const redacted = redactObject(data);
+    expect(redacted.user).toBe('admin');
+    expect(redacted.password).not.toBe('super_secret_password');
+    expect(redacted.token).not.toBe('bearer_token_123');
   });
 
   it('validates safe paths and blocks path traversal attempts', () => {

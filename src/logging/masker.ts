@@ -1,3 +1,5 @@
+import { redact, standardRules, stringAnonymize } from '@visulima/redact';
+
 const SECRET_PATTERNS = [
   /bearer\s+[a-zA-Z0-9_\-.~]+(?::[a-zA-Z0-9_\-.~]+)?/gi,
   /password\s*[:=]\s*["']?[^"'\s\n,]+["']?/gi,
@@ -14,7 +16,7 @@ export function maskSecrets(input: string): string {
   if (!input) return input;
   let masked = input;
 
-  // Mask basic patterns
+  // Mask specific credential patterns
   for (const pattern of SECRET_PATTERNS) {
     masked = masked.replace(pattern, (match) => {
       if (match.startsWith('http://') || match.startsWith('https://')) {
@@ -31,5 +33,17 @@ export function maskSecrets(input: string): string {
     });
   }
 
+  // Apply @visulima/redact rules desensitization
+  try {
+    masked = stringAnonymize(masked, standardRules);
+  } catch {
+    // Fallback if stringAnonymize fails
+  }
+
   return masked;
+}
+
+export function redactObject<T extends Record<string, unknown>>(obj: T): T {
+  if (!obj || typeof obj !== 'object') return obj;
+  return redact(obj, standardRules) as T;
 }

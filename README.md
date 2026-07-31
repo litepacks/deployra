@@ -187,6 +187,14 @@ When a new deployment is triggered while another deployment is currently active,
    - **`reject`**: If a deployment is currently running or queued, any incoming deployment requests are rejected immediately.
 4. **SHA Deduplication**: Identical commit SHAs currently active or queued are skipped automatically to prevent redundant builds.
 
+### Multi-Project Performance & Polling Safety
+
+When monitoring dozens of projects simultaneously in a single daemon instance, Deployra incorporates built-in protections against thundering herd network spikes:
+
+- **Initial Check Staggering**: Initial polling checks are staggered by a 250ms offset per project on startup, preventing burst network requests when monitoring multiple repositories.
+- **Interval Desynchronization Jitter**: A randomized jitter (+0..500ms) is applied to recurring polling timers to desynchronize check cycles naturally over time.
+- **Exponential Backoff on Errors**: Repositories encountering network or Git server failures automatically apply exponential backoff (up to 16x interval multiplier + random jitter) to prevent hammering failing remotes.
+
 ---
 
 ## Daemon & Service Management
