@@ -1,11 +1,22 @@
 import chalk from 'chalk';
+import { resolveProjectName } from '../../config/parser.js';
 import { WorkmaticEngine } from '../../jobs/workmatic-engine.js';
 import { isDaemonRunning } from '../../runtime/daemon-check.js';
 import { closeDatabase } from '../../storage/database.js';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
 import { SourceWatcher } from '../../watcher/source-watcher.js';
 
-export async function deployCommand(projectName: string): Promise<void> {
+export async function deployCommand(projectName?: string): Promise<void> {
+  const targetProject = resolveProjectName(projectName);
+  if (!targetProject) {
+    console.error(
+      chalk.red(
+        '✖ Error: Project name is required. Specify project name or run in a directory containing deployra.config.yaml',
+      ),
+    );
+    process.exit(1);
+  }
+
   const workmatic = new WorkmaticEngine();
   const depRepo = new DeploymentRepository();
   const watcher = new SourceWatcher(workmatic);
@@ -20,8 +31,8 @@ export async function deployCommand(projectName: string): Promise<void> {
       );
     }
 
-    console.log(chalk.bold(`Triggering manual deployment for '${projectName}'...`));
-    const depId = await watcher.checkProject(projectName, 'manual');
+    console.log(chalk.bold(`Triggering manual deployment for '${targetProject}'...`));
+    const depId = await watcher.checkProject(targetProject, 'manual');
 
     if (depId) {
       console.log(chalk.green(`✔ Manual deployment queued (ID: #${depId}). Processing...`));
@@ -48,7 +59,7 @@ export async function deployCommand(projectName: string): Promise<void> {
     } else {
       console.log(
         chalk.yellow(
-          `Could not trigger deployment for '${projectName}'. Check configuration and repository state.`,
+          `Could not trigger deployment for '${targetProject}'. Check configuration and repository state.`,
         ),
       );
     }

@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { resolveProjectName } from '../../config/parser.js';
 import { maskSecrets } from '../../logging/masker.js';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
 
@@ -6,11 +7,12 @@ export function logsCommand(
   projectName?: string,
   options: { follow?: boolean; deployment?: string; format?: 'pretty' | 'json' | 'jsonl' } = {},
 ): void {
+  const targetProject = resolveProjectName(projectName);
   const depRepo = new DeploymentRepository();
 
   let deploymentId = options.deployment;
-  if (!deploymentId && projectName) {
-    const latest = depRepo.getLatestDeployment(projectName);
+  if (!deploymentId && targetProject) {
+    const latest = depRepo.getLatestDeployment(targetProject);
     if (latest) deploymentId = latest.id;
   }
 

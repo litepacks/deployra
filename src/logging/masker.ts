@@ -12,6 +12,11 @@ const SECRET_PATTERNS = [
   /https?:\/\/([^:]+):([^@]+)@/g, // URLs with user:password
 ];
 
+// Filter standard rules to avoid false positive redaction of 40-character Git commit SHAs as AWS keys
+const safeStandardRules = standardRules.filter(
+  (rule: any) => rule.key !== 'awskey' && rule.key !== 'bankacc' && rule.key !== 'domain',
+);
+
 export function maskSecrets(input: string): string {
   if (!input) return input;
   let masked = input;
@@ -35,7 +40,7 @@ export function maskSecrets(input: string): string {
 
   // Apply @visulima/redact rules desensitization
   try {
-    masked = stringAnonymize(masked, standardRules);
+    masked = stringAnonymize(masked, safeStandardRules);
   } catch {
     // Fallback if stringAnonymize fails
   }

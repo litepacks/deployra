@@ -1,17 +1,28 @@
 import chalk from 'chalk';
 import Table from 'cli-table3';
+import { resolveProjectName } from '../../config/parser.js';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
 
-export function historyCommand(projectName: string, limit = 10): void {
+export function historyCommand(projectName?: string, limit = 10): void {
+  const targetProject = resolveProjectName(projectName);
+  if (!targetProject) {
+    console.error(
+      chalk.red(
+        '✖ Error: Project name is required. Specify project name or run in a directory containing deployra.config.yaml',
+      ),
+    );
+    process.exit(1);
+  }
+
   const depRepo = new DeploymentRepository();
-  const deployments = depRepo.getDeploymentsByProject(projectName, limit);
+  const deployments = depRepo.getDeploymentsByProject(targetProject, limit);
 
   if (deployments.length === 0) {
-    console.log(chalk.yellow(`No deployment history found for project '${projectName}'.`));
+    console.log(chalk.yellow(`No deployment history found for project '${targetProject}'.`));
     return;
   }
 
-  console.log(chalk.bold(`\nDeployment History for '${projectName}':\n`));
+  console.log(chalk.bold(`\nDeployment History for '${targetProject}':\n`));
 
   const table = new Table({
     head: [

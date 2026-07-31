@@ -1,16 +1,18 @@
 import chalk from 'chalk';
 import Table from 'cli-table3';
+import { resolveProjectName } from '../../config/parser.js';
 import { closeDatabase } from '../../storage/database.js';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
 import { ProjectRepository } from '../../storage/project-repository.js';
 
 export function statusCommand(projectName?: string): void {
+  const targetProject = resolveProjectName(projectName);
   try {
     const projRepo = new ProjectRepository();
     const depRepo = new DeploymentRepository();
 
-    const projects = projectName
-      ? [projRepo.getProject(projectName)].filter(Boolean)
+    const projects = targetProject
+      ? [projRepo.getProject(targetProject)].filter(Boolean)
       : projRepo.getAllProjects();
 
     if (projects.length === 0) {

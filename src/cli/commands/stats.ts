@@ -1,26 +1,28 @@
 import chalk from 'chalk';
 import Table from 'cli-table3';
 import { formatDurationMs } from '../../config/duration.js';
+import { resolveProjectName } from '../../config/parser.js';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
 import { ProjectRepository } from '../../storage/project-repository.js';
 
 export function statsCommand(projectName?: string): void {
+  const targetProject = resolveProjectName(projectName);
   const projRepo = new ProjectRepository();
   const depRepo = new DeploymentRepository();
 
   const projects = projRepo.getAllProjects();
-  const targetProjects = projectName ? projects.filter((p) => p.name === projectName) : projects;
+  const targetProjects = targetProject ? projects.filter((p) => p.name === targetProject) : projects;
 
-  if (projectName && targetProjects.length === 0) {
-    console.log(chalk.yellow(`Project '${projectName}' not found in Deployra registry.`));
+  if (targetProject && targetProjects.length === 0) {
+    console.log(chalk.yellow(`Project '${targetProject}' not found in Deployra registry.`));
     return;
   }
 
-  const stats = depRepo.getStats(projectName);
+  const stats = depRepo.getStats(targetProject);
   const successRate = stats.total > 0 ? ((stats.success / stats.total) * 100).toFixed(1) : '0.0';
 
   console.log(
-    chalk.bold(`\n📊 Deployra Deployment Statistics${projectName ? ` (${projectName})` : ''}:\n`),
+    chalk.bold(`\n📊 Deployra Deployment Statistics${targetProject ? ` (${targetProject})` : ''}:\n`),
   );
 
   const table = new Table({

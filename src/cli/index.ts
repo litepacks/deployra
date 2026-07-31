@@ -64,7 +64,7 @@ program
   });
 
 program
-  .command('remove <projectName>')
+  .command('remove [projectName]')
   .description('Remove a project from Deployra registry')
   .action((projectName) => {
     removeCommand(projectName);
@@ -93,14 +93,14 @@ program
   });
 
 program
-  .command('deploy <projectName>')
+  .command('deploy [projectName]')
   .description('Trigger a manual deployment for a project')
   .action(async (projectName) => {
     await deployCommand(projectName);
   });
 
 program
-  .command('cancel <target>')
+  .command('cancel [target]')
   .description('Cancel an active or queued deployment')
   .action((target) => {
     cancelCommand(target);
@@ -130,7 +130,7 @@ program
   });
 
 program
-  .command('history <projectName>')
+  .command('history [projectName]')
   .description('View deployment history for a project')
   .option('-l, --limit <number>', 'Number of past deployments to show', '10')
   .action((projectName, options) => {

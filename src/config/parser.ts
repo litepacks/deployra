@@ -69,3 +69,23 @@ export function loadConfig(configPath?: string): NormalizedDeployraConfig {
 
   return normalizeAndValidateConfig(parsed);
 }
+
+export function resolveProjectName(projectName?: string, cwd: string = process.cwd()): string | undefined {
+  if (projectName && projectName.trim()) {
+    return projectName.trim();
+  }
+
+  try {
+    const configPath = findConfigFile(cwd);
+    if (configPath) {
+      const config = loadConfig(configPath);
+      if (config?.project?.name) {
+        return config.project.name;
+      }
+    }
+  } catch {
+    // Ignore error if no local config exists
+  }
+
+  return undefined;
+}

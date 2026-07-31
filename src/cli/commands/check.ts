@@ -1,16 +1,18 @@
 import chalk from 'chalk';
+import { resolveProjectName } from '../../config/parser.js';
 import { WorkmaticEngine } from '../../jobs/workmatic-engine.js';
 import { closeDatabase } from '../../storage/database.js';
 import { ProjectRepository } from '../../storage/project-repository.js';
 import { SourceWatcher } from '../../watcher/source-watcher.js';
 
 export async function checkCommand(targetProjectName?: string): Promise<void> {
+  const resolvedTarget = resolveProjectName(targetProjectName);
   const workmatic = new WorkmaticEngine();
   const watcher = new SourceWatcher(workmatic);
   const repo = new ProjectRepository();
 
-  const projects = targetProjectName
-    ? [repo.getProject(targetProjectName)].filter(Boolean)
+  const projects = resolvedTarget
+    ? [repo.getProject(resolvedTarget)].filter(Boolean)
     : repo.getAllProjects();
 
   if (projects.length === 0) {

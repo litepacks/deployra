@@ -129,17 +129,17 @@ deployra watch
 | :--- | :--- |
 | `deployra init [path]` | Generate a sample `deployra.config.yaml` file |
 | `deployra add [configPath]` | Register a project configuration with Deployra |
-| `deployra remove <app>` | Deregister a project from Deployra registry |
+| `deployra remove [app]` | Deregister a project from Deployra registry |
 | `deployra list` | List all registered projects and SHA statuses |
 | `deployra watch [app]` | Start long-running polling daemon |
 | `deployra check [app]` | Perform a one-shot remote change check |
-| `deployra deploy <app>` | Trigger a manual deployment |
-| `deployra cancel <target>` | Cancel an active or queued deployment |
+| `deployra deploy [app]` | Trigger a manual deployment |
+| `deployra cancel [target]` | Cancel an active or queued deployment |
 | `deployra status [app]` | View status summary of projects |
 | `deployra stats [app]` | Display deployment metrics and success statistics |
 | `deployra logs [app]` | View deployment step logs and errors |
-| `deployra history <app>` | View past deployment history |
-| `deployra doctor` | Run system diagnostics |
+| `deployra history [app]` | View past deployment history |
+| `deployra doctor [configPath]` | Run system diagnostics |
 | `deployra service <action>` | Manage Deployra as a systemd service (`install\|start\|stop\|restart\|status\|uninstall`) |
 
 ---
