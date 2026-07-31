@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { NormalizedDeployraConfig } from '../config/types.js';
 import { RollbackManager } from '../deployment/rollback-manager.js';
 import { DeployraError } from '../errors/deployra-error.js';
 import { GitClient } from '../git/git-client.js';
@@ -52,42 +53,7 @@ export class DeploymentPipelineRunner {
 
       // Step 2: validate-repository
       await this.runStep(deploymentId, 'validate-repository', async () => {
-        if (isIsolated) {
-          if (!fs.existsSync(workingDir)) {
-            fs.mkdirSync(workingDir, { recursive: true });
-          }
-          if (!fs.existsSync(path.join(workingDir, '.git'))) {
-            const remoteUrlResult = await safeExec(
-              'git',
-              ['remote', 'get-url', config.source.remote],
-              {
-                cwd: project.path,
-              },
-            );
-            const remoteUrl = remoteUrlResult.stdout.trim();
-
-            await safeExec('git', ['init'], { cwd: workingDir });
-            await safeExec('git', ['remote', 'add', config.source.remote, remoteUrl], {
-              cwd: workingDir,
-            });
-          }
-        }
-
-        await this.gitClient.validateRepository(workingDir, config.source.remote);
-
-        const dirty = await this.gitClient.isDirty(workingDir);
-        if (dirty) {
-          if (config.deploy.dirtyWorkspace === 'reject') {
-            throw new DeployraError(
-              `Dirty target repository workspace at '${workingDir}'. Commit or stash changes before deploying, or set deploy.dirtyWorkspace to 'reset'.`,
-            );
-          } else if (config.deploy.dirtyWorkspace === 'reset') {
-            await this.gitClient.resetHard(workingDir, 'HEAD');
-            await this.gitClient.cleanUntracked(workingDir);
-          } else if (config.deploy.dirtyWorkspace === 'stash') {
-            await this.gitClient.stashChanges(workingDir);
-          }
-        }
+        await this.validateAndPrepareRepository(workingDir, project.path, config, isIsolated);
       });
 
       // Step 3: fetch
@@ -114,49 +80,19 @@ export class DeploymentPipelineRunner {
         await this.gitClient.resetHard(workingDir, targetSha);
       });
 
-      // Step 6+: Execute all command steps dynamically (install, migrate, build, etc.)
-      for (const [stepName, cmdList] of Object.entries(config.deploy.commands)) {
-        if (Array.isArray(cmdList) && cmdList.length > 0) {
-          await this.runStep(deploymentId, stepName, async () => {
-            for (const cmdStr of cmdList) {
-              await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry);
-            }
-
-            if (stepName === 'build' && isIsolated) {
-              logger.info(
-                `Syncing built artifacts from isolated workspace '${workingDir}' to target '${project.path}'`,
-                {
-                  project: projectName,
-                  deploymentId,
-                },
-              );
-              await this.syncIsolatedWorkspace(workingDir, project.path);
-            }
-          });
-        }
-      }
+      // Step 6+: Execute dynamic command steps (install, build, etc.)
+      await this.executeBuildCommands(
+        deploymentId,
+        projectName,
+        workingDir,
+        project.path,
+        config,
+        isIsolated,
+      );
 
       // Step 8: service-action
       await this.runStep(deploymentId, 'service-action', async () => {
-        const action = config.deploy.service.action;
-        const svcName = config.deploy.service.name;
-        const svcOpts = {
-          cwd: project.path,
-          script: config.deploy.service.script,
-          command: config.deploy.service.command,
-          memoryMax: config.deploy.service.memoryMax,
-          memoryHigh: config.deploy.service.memoryHigh,
-          cpuQuota: config.deploy.service.cpuQuota,
-          restartSec: config.deploy.service.restartSec,
-        };
-
-        if (action === 'start') {
-          await this.unitupAdapter.start(svcName, svcOpts);
-        } else if (action === 'restart') {
-          await this.unitupAdapter.restart(svcName, svcOpts);
-        } else if (action === 'reload') {
-          await this.unitupAdapter.reload(svcName, svcOpts);
-        }
+        await this.performServiceAction(project.path, config);
       });
 
       // Step 9: ready-check
@@ -173,40 +109,19 @@ export class DeploymentPipelineRunner {
         this.deploymentRepo.updateStatus(deploymentId, 'success');
         logger.info(
           `Deployment #${deploymentId} successfully completed for project '${projectName}'!`,
-          {
-            project: projectName,
-            deploymentId,
-          },
+          { project: projectName, deploymentId },
         );
       });
     } catch (err: any) {
-      logger.error(`Deployment #${deploymentId} failed at step: ${err.message}`, {
-        project: projectName,
+      await this.handleDeploymentFailure(
         deploymentId,
-      });
-
-      this.deploymentRepo.updateStatus(deploymentId, 'failed', err.message);
-
-      // Trigger rollback if previous successful SHA exists, lock was acquired, and rollback enabled
-      const prevSha = previousSha || project.lastSuccessfulSha;
-      if (lockAcquired && config.deploy.rollback.enabled && prevSha && prevSha !== targetSha) {
-        try {
-          this.deploymentRepo.updateStatus(deploymentId, 'rolling_back');
-          await this.rollbackManager.rollback({
-            projectName,
-            projectPath: project.path,
-            previousSuccessfulSha: prevSha,
-            config,
-          });
-          this.deploymentRepo.updateStatus(deploymentId, 'rolled_back');
-        } catch (rollbackErr: any) {
-          logger.error(`Rollback failed for deployment #${deploymentId}: ${rollbackErr.message}`, {
-            project: projectName,
-            deploymentId,
-          });
-          this.deploymentRepo.updateStatus(deploymentId, 'rollback_failed', rollbackErr.message);
-        }
-      }
+        projectName,
+        targetSha,
+        previousSha ?? project.lastSuccessfulSha,
+        config,
+        lockAcquired,
+        err,
+      );
     } finally {
       // Step 11: release-lock (Always executed)
       try {
@@ -217,6 +132,135 @@ export class DeploymentPipelineRunner {
         });
       } catch {
         // Ignore release lock cleanup errors
+      }
+    }
+  }
+
+  private async validateAndPrepareRepository(
+    workingDir: string,
+    projectPath: string,
+    config: NormalizedDeployraConfig,
+    isIsolated: boolean,
+  ): Promise<void> {
+    if (isIsolated) {
+      if (!fs.existsSync(workingDir)) {
+        fs.mkdirSync(workingDir, { recursive: true });
+      }
+      if (!fs.existsSync(path.join(workingDir, '.git'))) {
+        const remoteUrlResult = await safeExec('git', ['remote', 'get-url', config.source.remote], {
+          cwd: projectPath,
+        });
+        const remoteUrl = remoteUrlResult.stdout.trim();
+
+        await safeExec('git', ['init'], { cwd: workingDir });
+        await safeExec('git', ['remote', 'add', config.source.remote, remoteUrl], {
+          cwd: workingDir,
+        });
+      }
+    }
+
+    await this.gitClient.validateRepository(workingDir, config.source.remote);
+
+    const dirty = await this.gitClient.isDirty(workingDir);
+    if (dirty) {
+      if (config.deploy.dirtyWorkspace === 'reject') {
+        throw new DeployraError(
+          `Dirty target repository workspace at '${workingDir}'. Commit or stash changes before deploying, or set deploy.dirtyWorkspace to 'reset'.`,
+        );
+      } else if (config.deploy.dirtyWorkspace === 'reset') {
+        await this.gitClient.resetHard(workingDir, 'HEAD');
+        await this.gitClient.cleanUntracked(workingDir);
+      } else if (config.deploy.dirtyWorkspace === 'stash') {
+        await this.gitClient.stashChanges(workingDir);
+      }
+    }
+  }
+
+  private async executeBuildCommands(
+    deploymentId: string,
+    projectName: string,
+    workingDir: string,
+    projectPath: string,
+    config: NormalizedDeployraConfig,
+    isIsolated: boolean,
+  ): Promise<void> {
+    for (const [stepName, cmdList] of Object.entries(config.deploy.commands)) {
+      if (Array.isArray(cmdList) && cmdList.length > 0) {
+        await this.runStep(deploymentId, stepName, async () => {
+          for (const cmdStr of cmdList) {
+            await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry);
+          }
+
+          if (stepName === 'build' && isIsolated) {
+            logger.info(
+              `Syncing built artifacts from isolated workspace '${workingDir}' to target '${projectPath}'`,
+              { project: projectName, deploymentId },
+            );
+            await this.syncIsolatedWorkspace(workingDir, projectPath);
+          }
+        });
+      }
+    }
+  }
+
+  private async performServiceAction(
+    projectPath: string,
+    config: NormalizedDeployraConfig,
+  ): Promise<void> {
+    const action = config.deploy.service.action;
+    const svcName = config.deploy.service.name;
+    const svcOpts = {
+      cwd: projectPath,
+      script: config.deploy.service.script,
+      command: config.deploy.service.command,
+      memoryMax: config.deploy.service.memoryMax,
+      memoryHigh: config.deploy.service.memoryHigh,
+      cpuQuota: config.deploy.service.cpuQuota,
+      restartSec: config.deploy.service.restartSec,
+    };
+
+    if (action === 'start') {
+      await this.unitupAdapter.start(svcName, svcOpts);
+    } else if (action === 'restart') {
+      await this.unitupAdapter.restart(svcName, svcOpts);
+    } else if (action === 'reload') {
+      await this.unitupAdapter.reload(svcName, svcOpts);
+    }
+  }
+
+  private async handleDeploymentFailure(
+    deploymentId: string,
+    projectName: string,
+    targetSha: string,
+    prevSha: string | undefined,
+    config: NormalizedDeployraConfig,
+    lockAcquired: boolean,
+    err: any,
+  ): Promise<void> {
+    logger.error(`Deployment #${deploymentId} failed at step: ${err.message}`, {
+      project: projectName,
+      deploymentId,
+    });
+
+    this.deploymentRepo.updateStatus(deploymentId, 'failed', err.message);
+
+    // Trigger rollback if previous successful SHA exists, lock was acquired, and rollback enabled
+    if (lockAcquired && config.deploy.rollback.enabled && prevSha && prevSha !== targetSha) {
+      try {
+        this.deploymentRepo.updateStatus(deploymentId, 'rolling_back');
+        await this.rollbackManager.rollback({
+          projectName,
+          projectPath: config.project.path,
+          previousSuccessfulSha: prevSha,
+          config,
+        });
+        this.deploymentRepo.updateStatus(deploymentId, 'rolled_back');
+      } catch (rollbackErr: any) {
+        logger.error(`Rollback failed for deployment #${deploymentId}: ${rollbackErr.message}`, {
+          project: projectName,
+          deploymentId,
+        });
+        this.deploymentRepo.updateStatus(deploymentId, 'rollback_failed', rollbackErr.message);
       }
     }
   }
