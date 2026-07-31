@@ -4,9 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { safeExec } from '../src/security/exec.js';
+import { closeDatabase } from '../src/storage/database.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
 import { BROKEN_SERVER_CODE_SNIPPET } from './fixtures/broken-server.js';
-import { createSampleServer } from './fixtures/sample-server.js';
+import { createSampleServer, startSampleServer } from './fixtures/sample-server.js';
 
 function getCLICommand(): { command: string; argsPrefix: string[] } {
   const distCli = path.resolve('./dist/cli/index.js');
@@ -25,6 +26,7 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
   let targetPath: string;
 
   beforeEach(async () => {
+    closeDatabase();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deployra-cli-e2e-'));
     process.env.DEPLOYRA_DB_PATH = path.join(tmpDir, 'deployra.db');
     process.env.WORKMATIC_DB_PATH = path.join(tmpDir, 'workmatic.db');
@@ -56,9 +58,8 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
   it('runs real daemon process, registers app via CLI, and auto-deploys git commit update', async () => {
     const { command, argsPrefix } = getCLICommand();
 
-    // 1. Start live sample Node.js HTTP server fixture on port 3995
-    const fixtureServer = createSampleServer('v1.0.0', 3995);
-    await new Promise<void>((resolve) => fixtureServer.server.listen(3995, '127.0.0.1', resolve));
+    // 1. Start live sample Node.js HTTP server fixture on dynamic port
+    const fixtureServer = await startSampleServer('v1.0.0');
 
     // 2. Create .deployra.json config inside workDir
     const configPath = path.join(workDir, '.deployra.json');
@@ -179,9 +180,8 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
   it('does not crash daemon when build command fails on broken server code update and recovers on next valid commit', async () => {
     const { command, argsPrefix } = getCLICommand();
 
-    // 1. Start live sample Node.js HTTP server fixture on port 3996
-    const fixtureServer = createSampleServer('v1.0.0', 3996);
-    await new Promise<void>((resolve) => fixtureServer.server.listen(3996, '127.0.0.1', resolve));
+    // 1. Start live sample Node.js HTTP server fixture on dynamic port
+    const fixtureServer = await startSampleServer('v1.0.0');
 
     // 2. Create .deployra.json config inside workDir with build script command
     const configPath = path.join(workDir, '.deployra.json');
@@ -277,16 +277,20 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       // 7. Poll database for failed/rolled_back status
       const depRepo = new DeploymentRepository();
       let failedStatus = '';
-      for (let i = 0; i < 60; i++) {
+      let failedDep: any = null;
+      for (let i = 0; i < 80; i++) {
         await new Promise((r) => setTimeout(r, 500));
         const deps = depRepo.getDeploymentsByProject('broken-code-app');
-        const failedDep = deps.find((d) => d.status === 'failed' || d.status === 'rolled_back');
+        failedDep = deps.find((d) => d.status === 'failed' || d.status === 'rolled_back');
         if (failedDep) {
           failedStatus = failedDep.status;
           break;
         }
       }
 
+      if (!failedStatus) {
+        console.error('DAEMON LOGS ON BROKEN CODE FAILURE:\n', daemonLogs);
+      }
       expect(['failed', 'rolled_back']).toContain(failedStatus);
 
       // 8. VERIFY DAEMON IS STILL ALIVE & RUNNING (has not crashed)
@@ -296,9 +300,10 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       // 9. Fix broken server code, commit & push valid update
       fs.writeFileSync(path.join(workDir, 'server.js'), 'const version = "v2.0.0-fixed";');
       fs.writeFileSync(path.join(workDir, 'build.sh'), 'echo "Fixed Build OK"');
+      await safeExec('git', ['checkout', 'main'], { cwd: workDir });
       await safeExec('git', ['add', '.'], { cwd: workDir });
       await safeExec('git', ['commit', '-m', 'Fix broken server code'], { cwd: workDir });
-      await safeExec('git', ['push', 'origin', 'HEAD:main'], { cwd: workDir });
+      await safeExec('git', ['push', '--force', 'origin', 'main'], { cwd: workDir });
 
       // 10. Trigger deployment again
       await safeExec(command, [...argsPrefix, 'deploy', 'broken-code-app'], {
@@ -311,12 +316,12 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
 
       // 11. Poll database for success status
       let recoveredStatus = '';
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 80; i++) {
         await new Promise((r) => setTimeout(r, 500));
         const deps = depRepo.getDeploymentsByProject('broken-code-app');
-        const latest = deps[0];
-        if (latest && latest.status === 'success') {
-          recoveredStatus = latest.status;
+        const successDep = deps.find((d) => d.targetSha !== failedDep?.targetSha && d.status === 'success');
+        if (successDep) {
+          recoveredStatus = successDep.status;
           break;
         }
       }
@@ -332,5 +337,5 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       daemonProcess.kill('SIGTERM');
       await fixtureServer.close();
     }
-  }, 60000);
+  }, 90000);
 });

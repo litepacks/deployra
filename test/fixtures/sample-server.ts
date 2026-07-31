@@ -9,7 +9,7 @@ export interface SampleServerInstance {
   close: () => Promise<void>;
 }
 
-export function createSampleServer(initialVersion = 'v1.0.0', port = 3999): SampleServerInstance {
+export function createSampleServer(initialVersion = 'v1.0.0', port = 0): SampleServerInstance {
   let currentVersion = initialVersion;
 
   const server = http.createServer((req, res) => {
@@ -39,4 +39,13 @@ export function createSampleServer(initialVersion = 'v1.0.0', port = 3999): Samp
       });
     },
   };
+}
+
+export async function startSampleServer(initialVersion = 'v1.0.0'): Promise<SampleServerInstance> {
+  const instance = createSampleServer(initialVersion, 0);
+  await new Promise<void>((resolve) => instance.server.listen(0, '127.0.0.1', resolve));
+  const addr = instance.server.address() as { port: number };
+  instance.port = addr.port;
+  instance.url = `http://127.0.0.1:${addr.port}`;
+  return instance;
 }
