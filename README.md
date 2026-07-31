@@ -214,22 +214,33 @@ When a new deployment is triggered while another deployment is currently active,
 graph TD
     Trigger["Deployment Trigger (Git SHA / Manual)"] --> DedupeCheck{"SHA Deduplication Check"}
     
-    DedupeCheck -->|"Identical Active or Queued SHA"| Skip["Skip Duplicate Deployment"]
-    DedupeCheck -->|"New Commit SHA"| LockCheck{"Project Lock Active? (Concurrency = 1)"}
+    DedupeCheck -->|"Identical SHA Active or Queued"| Skip["Skip Duplicate Deployment"]
+    DedupeCheck -->|"New Commit SHA"| LockCheck{"Project Lock Status"}
     
-    LockCheck -->|"No (Idle)"| AcquireLock["Acquire Project Lock (SQLite)"]
-    LockCheck -->|"Yes (Deployment Active)"| QueueModeDecision{"Check deploy.queueMode"}
-    
-    QueueModeDecision -->|"latest (Default)"| CancelPending["Cancel Pending Jobs & Enqueue Latest SHA"]
-    QueueModeDecision -->|"fifo"| FIFOEnqueue["Enqueue to Workmatic FIFO Queue"]
-    QueueModeDecision -->|"reject"| RejectDeploy["Reject Incoming Request"]
-    
-    AcquireLock --> RunPipeline["Execute Deployment Pipeline"]
-    CancelPending --> WaitTurn["Wait for Active Job Completion"]
-    FIFOEnqueue --> WaitTurn
-    WaitTurn -->|"Job Finished & Lock Released"| AcquireLock
-    
-    RunPipeline --> ReleaseLock["Release Lock & Process Next Queue Item"]
+    LockCheck -->|"Lock Free (Idle)"| AcquireLock["Acquire SQLite Project Lock & Run Pipeline"]
+    LockCheck -->|"Lock Busy (Deployment Active)"| QueueModeBranch
+
+    subgraph QueueModeBranch["Queue Modes Behaviors (deploy.queueMode)"]
+        subgraph ModeLatest["queueMode: latest (Default)"]
+            L1["Cancel Pending/Queued Jobs"] --> L2["Enqueue Only Latest SHA"]
+        end
+
+        subgraph ModeFIFO["queueMode: fifo"]
+            F1["Append to FIFO Queue"] --> F2["Queue Sequential Jobs"]
+        end
+
+        subgraph ModeReject["queueMode: reject"]
+            R1["Reject Deployment Request Immediately"]
+        end
+    end
+
+    QueueModeBranch -->|"Mode: latest"| ModeLatest
+    QueueModeBranch -->|"Mode: fifo"| ModeFIFO
+    QueueModeBranch -->|"Mode: reject"| ModeReject
+
+    L2 --> Dequeue["Active Job Completes -> Dequeue Next Job"]
+    F2 --> Dequeue
+    Dequeue --> AcquireLock
 ```
 
 1. **SHA Deduplication**: Identical commit SHAs currently active or queued are skipped automatically to prevent redundant builds.
