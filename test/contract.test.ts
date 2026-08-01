@@ -230,20 +230,85 @@ describe('Contract Tests', () => {
   });
 
   describe('SourceWatcher Auto-Discovery Contract', () => {
-    it('dynamically discovers newly added projects and syncs watcher timers', async () => {
+    it('monitors all registered projects when started without a target project name', async () => {
       const engine = new WorkmaticEngine();
       const watcher = new SourceWatcher(engine);
       const projRepo = new ProjectRepository();
 
+      projRepo.saveProject(
+        normalizeAndValidateConfig({
+          project: { name: 'app-alpha', path: '/tmp/app-alpha' },
+        }),
+      );
+      projRepo.saveProject(
+        normalizeAndValidateConfig({
+          project: { name: 'app-beta', path: '/tmp/app-beta' },
+        }),
+      );
+
       await watcher.start();
 
-      const config1 = normalizeAndValidateConfig({
-        project: { name: 'auto-app-1', path: '/tmp/auto-app-1' },
-      });
-      projRepo.saveProject(config1);
+      expect((watcher as any).timers.has('app-alpha')).toBe(true);
+      expect((watcher as any).timers.has('app-beta')).toBe(true);
+
+      await watcher.stop();
+    });
+
+    it('monitors ONLY the specified target project when targetProjectName is provided', async () => {
+      const engine = new WorkmaticEngine();
+      const watcher = new SourceWatcher(engine);
+      const projRepo = new ProjectRepository();
+
+      projRepo.saveProject(
+        normalizeAndValidateConfig({
+          project: { name: 'app-alpha', path: '/tmp/app-alpha' },
+        }),
+      );
+      projRepo.saveProject(
+        normalizeAndValidateConfig({
+          project: { name: 'app-beta', path: '/tmp/app-beta' },
+        }),
+      );
+
+      await watcher.start('app-alpha');
+
+      expect((watcher as any).timers.has('app-alpha')).toBe(true);
+      expect((watcher as any).timers.has('app-beta')).toBe(false);
+
+      await watcher.stop();
+    });
+
+    it('handles dynamic project additions and deletions during syncProjects', async () => {
+      const engine = new WorkmaticEngine();
+      const watcher = new SourceWatcher(engine);
+      const projRepo = new ProjectRepository();
+
+      projRepo.saveProject(
+        normalizeAndValidateConfig({
+          project: { name: 'app-alpha', path: '/tmp/app-alpha' },
+        }),
+      );
+      projRepo.saveProject(
+        normalizeAndValidateConfig({
+          project: { name: 'app-beta', path: '/tmp/app-beta' },
+        }),
+      );
+
+      await watcher.start();
+
+      // Add app-gamma, delete app-beta
+      projRepo.saveProject(
+        normalizeAndValidateConfig({
+          project: { name: 'app-gamma', path: '/tmp/app-gamma' },
+        }),
+      );
+      projRepo.deleteProject('app-beta');
 
       await watcher.syncProjects();
-      expect((watcher as any).timers.has('auto-app-1')).toBe(true);
+
+      expect((watcher as any).timers.has('app-alpha')).toBe(true);
+      expect((watcher as any).timers.has('app-gamma')).toBe(true);
+      expect((watcher as any).timers.has('app-beta')).toBe(false);
 
       await watcher.stop();
     });
@@ -273,5 +338,27 @@ describe('Contract Tests', () => {
       const result = await watcher.checkProject('dup-sha-app', 'poll');
       expect(result).toBeNull();
     });
+
+    it('watchCommand passes trimmed target when specified, and undefined when omitted', async () => {
+      const { watchCommand } = await import('../src/cli/commands/watch.js');
+      const { DeployraDaemon } = await import('../src/daemon.js');
+
+      const captured: (string | undefined)[] = [];
+      const originalStart = DeployraDaemon.prototype.start;
+      DeployraDaemon.prototype.start = async function (targetProjectName?: string) {
+        captured.push(targetProjectName);
+      };
+
+      try {
+        await watchCommand();
+        await watchCommand('  my-specific-app  ');
+
+        expect(captured).toEqual([undefined, 'my-specific-app']);
+      } finally {
+        DeployraDaemon.prototype.start = originalStart;
+      }
+    });
   });
 });
+
+
