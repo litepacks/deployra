@@ -191,10 +191,7 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
         attempts: data.deploy.retry.attempts,
         backoffMs: retryBackoffMs,
       },
-      commands: {
-        install: data.deploy.commands.install,
-        build: data.deploy.commands.build,
-      },
+      commands: data.deploy.commands,
       service: {
         name: serviceName,
         action: serviceAction,

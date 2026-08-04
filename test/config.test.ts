@@ -45,6 +45,25 @@ describe('Config Schema Validation', () => {
     expect(normalized.deploy.service.action).toBe('restart');
   });
 
+  it('preserves all custom command steps and multiple commands per step array', () => {
+    const normalized = normalizeAndValidateConfig({
+      project: { name: 'app-custom-steps', path: '/app' },
+      deploy: {
+        commands: {
+          install: ['npm ci'],
+          build: ['npm run build:css', 'npm run build:js'],
+          test: ['npm test'],
+          migrate: ['npx prisma db push'],
+        },
+      },
+    });
+
+    expect(normalized.deploy.commands.install).toEqual(['npm ci']);
+    expect(normalized.deploy.commands.build).toEqual(['npm run build:css', 'npm run build:js']);
+    expect(normalized.deploy.commands.test).toEqual(['npm test']);
+    expect(normalized.deploy.commands.migrate).toEqual(['npx prisma db push']);
+  });
+
   it('throws error when ready interval is greater or equal to ready timeout', () => {
     const raw = {
       project: { name: 'app', path: '/app' },
