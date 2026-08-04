@@ -55,6 +55,8 @@ function initDatabaseSchema(db: SQLiteDatabase): void {
       last_seen_sha TEXT,
       last_successful_sha TEXT,
       config_json TEXT NOT NULL,
+      config_hash TEXT,
+      config_version INTEGER NOT NULL DEFAULT 1,
       updated_at INTEGER NOT NULL
     );
 
@@ -92,4 +94,16 @@ function initDatabaseSchema(db: SQLiteDatabase): void {
       locked_at INTEGER NOT NULL
     );
   `);
+
+  try {
+    db.exec(`ALTER TABLE projects ADD COLUMN config_hash TEXT;`);
+  } catch {
+    // Column already exists
+  }
+
+  try {
+    db.exec(`ALTER TABLE projects ADD COLUMN config_version INTEGER NOT NULL DEFAULT 1;`);
+  } catch {
+    // Column already exists
+  }
 }

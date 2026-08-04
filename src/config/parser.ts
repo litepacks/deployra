@@ -1,9 +1,18 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import parseYaml from 'yaml';
 import { ConfigValidationError } from '../errors/deployra-error.js';
 import { normalizeAndValidateConfig } from './schema.js';
 import type { NormalizedDeployraConfig } from './types.js';
+
+export function computeConfigHash(config: NormalizedDeployraConfig | object): string {
+  const copy = JSON.parse(JSON.stringify(config));
+  delete copy.configHash;
+  delete copy.configVersion;
+  const jsonStr = JSON.stringify(copy);
+  return `cfg_${crypto.createHash('sha256').update(jsonStr).digest('hex').slice(0, 12)}`;
+}
 
 export function findConfigFile(targetPath?: string): string {
   if (targetPath) {
@@ -67,7 +76,21 @@ export function loadConfig(configPath?: string): NormalizedDeployraConfig {
     throw new ConfigValidationError(`Failed to parse config file '${filePath}': ${err.message}`);
   }
 
-  return normalizeAndValidateConfig(parsed);
+  const normalized = normalizeAndValidateConfig(parsed);
+  normalized.configHash = computeConfigHash(normalized);
+  return normalized;
+}
+
+export function loadConfigFromDir(dirPath: string): NormalizedDeployraConfig | null {
+  try {
+    const configPath = findConfigFile(dirPath);
+    if (configPath) {
+      return loadConfig(configPath);
+    }
+  } catch {
+    // Config not found or invalid
+  }
+  return null;
 }
 
 export function resolveProjectName(

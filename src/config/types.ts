@@ -117,6 +117,8 @@ export interface DeployraConfig {
 
 // Normalized internal representation with resolved default values and duration milliseconds
 export interface NormalizedDeployraConfig {
+  configHash?: string;
+  configVersion?: number;
   project: {
     name: string;
     path: string;

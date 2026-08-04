@@ -28,6 +28,19 @@ describe('Storage & Repository Tests', () => {
     expect(fetched).not.toBeNull();
     expect(fetched?.name).toBe('test-app');
     expect(fetched?.path).toBe('/tmp/test-app');
+    expect(fetched?.configVersion).toBe(1);
+    expect(fetched?.configHash).toMatch(/^cfg_[a-f0-9]{12}$/);
+
+    // Save modified config for same project
+    const modifiedConfig = normalizeAndValidateConfig({
+      project: { name: 'test-app', path: '/tmp/test-app' },
+      deploy: { commands: { build: ['echo "new build command"'] } },
+    });
+    projRepo.saveProject(modifiedConfig);
+    const updated = projRepo.getProject('test-app');
+
+    expect(updated?.configVersion).toBe(2);
+    expect(updated?.configHash).not.toBe(fetched?.configHash);
   });
 
   it('manages project deployment locks cleanly', () => {

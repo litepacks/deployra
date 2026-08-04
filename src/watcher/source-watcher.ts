@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { computeConfigHash, loadConfigFromDir } from '../config/parser.js';
 import { isUrlLike } from '../config/schema.js';
 import { GitClient } from '../git/git-client.js';
 import type { WorkmaticEngine } from '../jobs/workmatic-engine.js';
@@ -90,10 +91,27 @@ export class SourceWatcher {
     projectName: string,
     triggerType: 'poll' | 'manual' | 'webhook' = 'poll',
   ): Promise<string | null> {
-    const proj = this.projectRepo.getProject(projectName);
+    let proj = this.projectRepo.getProject(projectName);
     if (!proj) {
       logger.error(`Cannot check project '${projectName}': not found`);
       return null;
+    }
+
+    // Refresh config from disk if updated
+    try {
+      const diskConfig = loadConfigFromDir(proj.path);
+      if (diskConfig) {
+        const diskHash = computeConfigHash(diskConfig);
+        if (diskHash !== proj.configHash) {
+          proj = this.projectRepo.saveProject(diskConfig);
+          logger.info(
+            `Detected config change on disk for project '${projectName}' (version v${proj.configVersion}, hash ${proj.configHash})`,
+            { project: projectName },
+          );
+        }
+      }
+    } catch {
+      // Ignore disk config read errors on polling check
     }
 
     try {

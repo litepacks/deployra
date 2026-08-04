@@ -20,6 +20,7 @@ export function listCommand(): void {
     const table = new Table({
       head: [
         chalk.cyan('Project'),
+        chalk.cyan('Config Version'),
         chalk.cyan('Path'),
         chalk.cyan('Remote/Branch'),
         chalk.cyan('Last Seen SHA'),
@@ -30,6 +31,7 @@ export function listCommand(): void {
     for (const p of projects) {
       table.push([
         chalk.bold(p.name),
+        `v${p.configVersion} (${p.configHash ? p.configHash.substring(0, 10) : 'cfg_default'})`,
         p.path,
         `${p.remote}/${p.branch}`,
         p.lastSeenSha ? p.lastSeenSha.substring(0, 7) : chalk.gray('none'),

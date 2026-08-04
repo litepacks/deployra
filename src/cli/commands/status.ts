@@ -23,6 +23,7 @@ export function statusCommand(projectName?: string): void {
     const table = new Table({
       head: [
         chalk.cyan('Project'),
+        chalk.cyan('Config Version'),
         chalk.cyan('Latest Dep ID'),
         chalk.cyan('Status'),
         chalk.cyan('Target SHA'),
@@ -33,6 +34,7 @@ export function statusCommand(projectName?: string): void {
 
     for (const p of projects) {
       const latest = depRepo.getLatestDeployment(p!.name);
+      const configVer = `v${p!.configVersion}`;
       if (latest) {
         let statusColor = chalk.white;
         switch (latest.status) {
@@ -54,6 +56,7 @@ export function statusCommand(projectName?: string): void {
 
         table.push([
           chalk.bold(p!.name),
+          configVer,
           `#${latest.id}`,
           statusColor(latest.status),
           latest.targetSha.substring(0, 7),
@@ -63,6 +66,7 @@ export function statusCommand(projectName?: string): void {
       } else {
         table.push([
           chalk.bold(p!.name),
+          configVer,
           chalk.gray('none'),
           chalk.gray('no deployments'),
           '-',

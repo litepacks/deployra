@@ -298,9 +298,9 @@ describe('Deployra Real CLI Daemon & App Integration E2E Test', () => {
       expect(daemonProcess.killed).toBe(false);
 
       // 9. Fix broken server code, commit & push valid update
+      await safeExec('git', ['checkout', '-B', 'main'], { cwd: workDir });
       fs.writeFileSync(path.join(workDir, 'server.js'), 'const version = "v2.0.0-fixed";');
       fs.writeFileSync(path.join(workDir, 'build.sh'), 'echo "Fixed Build OK"');
-      await safeExec('git', ['checkout', 'main'], { cwd: workDir });
       await safeExec('git', ['add', '.'], { cwd: workDir });
       await safeExec('git', ['commit', '-m', 'Fix broken server code'], { cwd: workDir });
       await safeExec('git', ['push', '--force', 'origin', 'main'], { cwd: workDir });

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { computeConfigHash, loadConfigFromDir } from '../config/parser.js';
 import type { NormalizedDeployraConfig } from '../config/types.js';
 import { RollbackManager } from '../deployment/rollback-manager.js';
 import { DeployraError } from '../errors/deployra-error.js';
@@ -35,7 +36,7 @@ export class DeploymentPipelineRunner {
       return;
     }
 
-    const config = project.config;
+    let config = project.config;
     const isIsolated = config.deploy.strategy === 'isolated';
     const workingDir = isIsolated ? config.deploy.workspacePath : project.path;
     let lockAcquired = false;
@@ -78,6 +79,14 @@ export class DeploymentPipelineRunner {
       // Step 5: prepare
       await this.runStep(deploymentId, 'prepare', async () => {
         await this.gitClient.resetHard(workingDir, targetSha);
+      });
+
+      // Step 5.5: refresh-config
+      await this.runStep(deploymentId, 'refresh-config', async () => {
+        const updatedConfig = this.reloadConfigFromWorkingDir(workingDir, config);
+        if (updatedConfig) {
+          config = updatedConfig;
+        }
       });
 
       // Step 6+: Execute dynamic command steps (install, build, etc.)
@@ -324,6 +333,35 @@ export class DeploymentPipelineRunner {
       }
     }
     throw lastErr;
+  }
+
+  private reloadConfigFromWorkingDir(
+    workingDir: string,
+    currentConfig: NormalizedDeployraConfig,
+  ): NormalizedDeployraConfig | null {
+    try {
+      const freshConfig = loadConfigFromDir(workingDir);
+      if (freshConfig) {
+        const freshHash = computeConfigHash(freshConfig);
+        if (freshHash !== currentConfig.configHash) {
+          const savedProj = this.projectRepo.saveProject(freshConfig);
+          logger.info(
+            `Detected updated Deployra configuration at commit (version v${savedProj.configVersion}, hash ${savedProj.configHash}). Updating active pipeline settings.`,
+            {
+              project: currentConfig.project.name,
+              configVersion: savedProj.configVersion,
+              configHash: savedProj.configHash,
+            },
+          );
+          return savedProj.config;
+        }
+        return freshConfig;
+      }
+    } catch (err: any) {
+      logger.warn(`Could not reload configuration from working directory '${workingDir}': ${err.message}`);
+      throw new DeployraError(`Failed to load updated deployra config at target commit: ${err.message}`);
+    }
+    return null;
   }
 
   private async syncIsolatedWorkspace(sourceDir: string, targetDir: string): Promise<void> {

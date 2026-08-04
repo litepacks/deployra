@@ -89,3 +89,32 @@ describe('Config Schema Validation', () => {
     expect(isUrlLike('cinilicraft-shop')).toBe(false);
   });
 });
+
+describe('Config Hashing & Versioning', () => {
+  it('generates consistent hashes for identical configs and different hashes when commands change', async () => {
+    const { computeConfigHash } = await import('../src/config/parser.js');
+
+    const config1 = normalizeAndValidateConfig({
+      project: { name: 'app-hash', path: '/app' },
+      deploy: { commands: { build: ['npm run build'] } },
+    });
+
+    const config2 = normalizeAndValidateConfig({
+      project: { name: 'app-hash', path: '/app' },
+      deploy: { commands: { build: ['npm run build'] } },
+    });
+
+    const config3 = normalizeAndValidateConfig({
+      project: { name: 'app-hash', path: '/app' },
+      deploy: { commands: { build: ['npm run build:v2'] } },
+    });
+
+    const hash1 = computeConfigHash(config1);
+    const hash2 = computeConfigHash(config2);
+    const hash3 = computeConfigHash(config3);
+
+    expect(hash1).toBe(hash2);
+    expect(hash1).not.toBe(hash3);
+    expect(hash1).toMatch(/^cfg_[a-f0-9]{12}$/);
+  });
+});

@@ -421,4 +421,83 @@ describe('Deployra End-to-End (E2E) Pipeline', () => {
     const installStep = result?.steps.find((s) => s.stepName === 'install');
     expect(installStep?.status).toBe('pending');
   });
+
+  it('dynamically reloads updated deployra.config.yaml commands from repository commit during deployment', async () => {
+    const projRepo = new ProjectRepository();
+    const depRepo = new DeploymentRepository();
+
+    fs.writeFileSync(path.join(workDir, 'build_v1.sh'), 'echo BUILD_V1 > build_output.txt');
+    fs.writeFileSync(path.join(workDir, 'build_v2.sh'), 'echo BUILD_V2 > build_output.txt');
+    await safeExec('git', ['add', '.'], { cwd: workDir });
+    await safeExec('git', ['commit', '-m', 'Add build scripts'], { cwd: workDir });
+
+    // 1. Initial config with build command v1 (sh build_v1.sh)
+    const initialConfig = normalizeAndValidateConfig({
+      project: {
+        name: 'dynamic-cfg-app',
+        path: workDir,
+      },
+      source: { remote: 'origin', branch: 'main' },
+      deploy: {
+        strategy: 'in-place',
+        commands: {
+          build: ['sh build_v1.sh'],
+        },
+        service: { name: 'dynamic-cfg-app', action: 'none' },
+      },
+    });
+
+    const savedInitial = projRepo.saveProject(initialConfig);
+    expect(savedInitial.configVersion).toBe(1);
+
+    // Update deployra.config.yaml to use build_v2.sh in the working tree
+    const newConfigYaml = `
+project:
+  name: dynamic-cfg-app
+  path: ${workDir}
+source:
+  remote: origin
+  branch: main
+deploy:
+  strategy: in-place
+  commands:
+    build:
+      - sh build_v2.sh
+  service:
+    name: dynamic-cfg-app
+    action: none
+`;
+    fs.writeFileSync(path.join(workDir, 'deployra.config.yaml'), newConfigYaml);
+    await safeExec('git', ['add', '.'], { cwd: workDir });
+    await safeExec('git', ['commit', '-m', 'Update deployra.config.yaml to use build_v2.sh'], { cwd: workDir });
+    await safeExec('git', ['push', 'origin', 'main'], { cwd: workDir });
+
+    const targetSha = (await safeExec('git', ['rev-parse', 'HEAD'], { cwd: workDir })).stdout.trim();
+
+    const runner = new DeploymentPipelineRunner();
+    const dep = depRepo.createDeployment({
+      id: 'dep_dynamic_cfg_1',
+      projectName: 'dynamic-cfg-app',
+      targetSha,
+      triggerType: 'manual',
+    });
+
+    await runner.runDeployment({
+      deploymentId: dep.id,
+      projectName: 'dynamic-cfg-app',
+      targetSha,
+    });
+
+    const result = depRepo.getDeployment(dep.id);
+    expect(result?.status).toBe('success');
+
+    // Verify build_output.txt contains BUILD_V2
+    const outputContent = fs.readFileSync(path.join(workDir, 'build_output.txt'), 'utf-8');
+    expect(outputContent.trim()).toBe('BUILD_V2');
+
+    // Verify ProjectRepository was updated to configVersion: 2
+    const updatedProj = projRepo.getProject('dynamic-cfg-app');
+    expect(updatedProj?.configVersion).toBe(2);
+    expect(updatedProj?.config.deploy.commands.build).toEqual(['sh build_v2.sh']);
+  });
 });
