@@ -469,10 +469,14 @@ deploy:
 `;
     fs.writeFileSync(path.join(workDir, 'deployra.config.yaml'), newConfigYaml);
     await safeExec('git', ['add', '.'], { cwd: workDir });
-    await safeExec('git', ['commit', '-m', 'Update deployra.config.yaml to use build_v2.sh'], { cwd: workDir });
+    await safeExec('git', ['commit', '-m', 'Update deployra.config.yaml to use build_v2.sh'], {
+      cwd: workDir,
+    });
     await safeExec('git', ['push', 'origin', 'main'], { cwd: workDir });
 
-    const targetSha = (await safeExec('git', ['rev-parse', 'HEAD'], { cwd: workDir })).stdout.trim();
+    const targetSha = (
+      await safeExec('git', ['rev-parse', 'HEAD'], { cwd: workDir })
+    ).stdout.trim();
 
     const runner = new DeploymentPipelineRunner();
     const dep = depRepo.createDeployment({

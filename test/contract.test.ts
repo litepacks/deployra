@@ -360,5 +360,3 @@ describe('Contract Tests', () => {
     });
   });
 });
-
-

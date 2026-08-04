@@ -358,8 +358,12 @@ export class DeploymentPipelineRunner {
         return freshConfig;
       }
     } catch (err: any) {
-      logger.warn(`Could not reload configuration from working directory '${workingDir}': ${err.message}`);
-      throw new DeployraError(`Failed to load updated deployra config at target commit: ${err.message}`);
+      logger.warn(
+        `Could not reload configuration from working directory '${workingDir}': ${err.message}`,
+      );
+      throw new DeployraError(
+        `Failed to load updated deployra config at target commit: ${err.message}`,
+      );
     }
     return null;
   }

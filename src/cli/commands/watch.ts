@@ -11,4 +11,3 @@ export async function watchCommand(targetProjectName?: string): Promise<void> {
     process.exit(1);
   }
 }
-

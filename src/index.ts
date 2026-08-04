@@ -1,6 +1,11 @@
 export { statsCommand } from './cli/commands/stats.js';
 export { formatDurationMs, parseDurationMs } from './config/duration.js';
-export { computeConfigHash, findConfigFile, loadConfig, loadConfigFromDir } from './config/parser.js';
+export {
+  computeConfigHash,
+  findConfigFile,
+  loadConfig,
+  loadConfigFromDir,
+} from './config/parser.js';
 export { normalizeAndValidateConfig } from './config/schema.js';
 export * from './config/types.js';
 export { DeployraDaemon } from './daemon.js';
