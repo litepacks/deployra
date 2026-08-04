@@ -76,4 +76,16 @@ describe('Config Schema Validation', () => {
     expect(isolatedNorm.deploy.strategy).toBe('isolated');
     expect(isolatedNorm.deploy.workspacePath).toBe('/tmp/custom-workspace');
   });
+
+  it('correctly identifies URL-like strings using isUrlLike', async () => {
+    const { isUrlLike } = await import('../src/config/schema.js');
+
+    expect(isUrlLike('https://github.com/user/repo.git')).toBe(true);
+    expect(isUrlLike('http://gitlab.com/user/repo')).toBe(true);
+    expect(isUrlLike('git@github.com:user/repo.git')).toBe(true);
+    expect(isUrlLike('my-repo.git')).toBe(true);
+
+    expect(isUrlLike('my-clean-app')).toBe(false);
+    expect(isUrlLike('cinilicraft-shop')).toBe(false);
+  });
 });

@@ -4,6 +4,11 @@ import { ConfigValidationError } from '../errors/deployra-error.js';
 import { parseDurationMs } from './duration.js';
 import type { NormalizedDeployraConfig } from './types.js';
 
+export function isUrlLike(str: string): boolean {
+  if (!str) return false;
+  return /^(https?:\/\/|git@|[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+:)/i.test(str) || str.endsWith('.git');
+}
+
 const durationSchema = z.union([z.string(), z.number()]);
 
 const httpCheckSchema = z.object({

@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { loadConfig } from '../../config/parser.js';
+import { isUrlLike } from '../../config/schema.js';
 import { WorkmaticEngine } from '../../jobs/workmatic-engine.js';
 import { isDaemonRunning } from '../../runtime/daemon-check.js';
 import { closeDatabase } from '../../storage/database.js';
@@ -11,6 +12,14 @@ export async function addCommand(configPath?: string): Promise<void> {
     const config = loadConfig(configPath);
     const repo = new ProjectRepository();
     const saved = repo.saveProject(config);
+
+    if (isUrlLike(saved.name)) {
+      console.log(
+        chalk.yellow(
+          `⚠ Warning: Project name '${saved.name}' looks like a Git URL. It's recommended to use a clean project name (e.g. 'cinilicraft-shop') for project.name in deployra.config.yaml.`,
+        ),
+      );
+    }
 
     console.log(
       chalk.green(

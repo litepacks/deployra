@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { isUrlLike } from '../config/schema.js';
 import { GitClient } from '../git/git-client.js';
 import type { WorkmaticEngine } from '../jobs/workmatic-engine.js';
 import { logger } from '../logging/logger.js';
@@ -67,6 +68,12 @@ export class SourceWatcher {
     let index = 0;
     for (const proj of allProjects) {
       if (!this.timers.has(proj.name)) {
+        if (isUrlLike(proj.name)) {
+          logger.warn(
+            `Project name '${proj.name}' appears to be a Git repository URL. Consider using a clean identifier (e.g. 'my-app') for project.name in deployra.config.yaml.`,
+            { project: proj.name },
+          );
+        }
         logger.info(
           `Started monitoring project '${proj.name}' (${proj.remote}/${proj.branch}) every ${proj.config.watch.intervalMs}ms`,
           { project: proj.name },
