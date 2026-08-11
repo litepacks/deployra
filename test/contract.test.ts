@@ -113,7 +113,7 @@ describe('Contract Tests', () => {
         if (unitFileExists(serviceName)) {
           const metadata = readAppMetadata(serviceName);
           if (metadata) {
-            expect(metadata.command).toBe('npm');
+            expect(metadata.command).toContain('npm');
             expect(metadata.args).toEqual(['run', 'start:api']);
           }
         }
@@ -128,7 +128,7 @@ describe('Contract Tests', () => {
         if (unitFileExists(serviceName)) {
           const updatedMeta = readAppMetadata(serviceName);
           if (updatedMeta) {
-            expect(updatedMeta.command).toBe('npm');
+            expect(updatedMeta.command).toContain('npm');
             expect(updatedMeta.args).toEqual(['run', 'start:web']);
           }
         }

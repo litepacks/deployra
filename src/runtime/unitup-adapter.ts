@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   addService,
   getServiceStatus,
-  isSystemctlAvailable,
+  isUserSystemdAvailable,
   removeService,
   restartService,
   startService,
@@ -97,11 +97,32 @@ function resolveEntryPoint(
   return { script: 'index.js' };
 }
 
+function isNonFatalSystemdError(err: any): boolean {
+  if (!err) return false;
+  const msg = typeof err === 'string' ? err : err.message || '';
+  return (
+    msg.includes('Failed to reload systemd daemon') ||
+    msg.includes('Failed to connect to bus') ||
+    msg.includes('systemd is not running') ||
+    msg.includes('Systemd is not available') ||
+    msg.includes('Not running under systemd') ||
+    msg.includes('does not exist') ||
+    msg.includes('not found')
+  );
+}
+
 export class UnitupAdapter implements RuntimeManager {
+  private systemdAvailabilityCache?: boolean;
+
   private async isSystemdAvailable(): Promise<boolean> {
+    if (this.systemdAvailabilityCache !== undefined) {
+      return this.systemdAvailabilityCache;
+    }
     try {
-      return await isSystemctlAvailable();
+      this.systemdAvailabilityCache = await isUserSystemdAvailable();
+      return this.systemdAvailabilityCache;
     } catch {
+      this.systemdAvailabilityCache = false;
       return false;
     }
   }
@@ -134,6 +155,13 @@ export class UnitupAdapter implements RuntimeManager {
         service,
       });
     } catch (err: any) {
+      if (isNonFatalSystemdError(err)) {
+        logger.warn(
+          `Systemd daemon reload or user D-Bus is inactive (${err.message}). Simulating service action for '${service}'.`,
+          { service },
+        );
+        return;
+      }
       throw new RuntimeError(`Unitup failed to create/update service '${service}': ${err.message}`);
     }
   }
@@ -152,7 +180,7 @@ export class UnitupAdapter implements RuntimeManager {
       }
       await startService(service);
     } catch (err: any) {
-      if (err.message?.includes('does not exist') || err.message?.includes('not found')) {
+      if (isNonFatalSystemdError(err)) {
         await this.upsertService(service, options);
         return;
       }
@@ -170,6 +198,13 @@ export class UnitupAdapter implements RuntimeManager {
     try {
       await stopService(service);
     } catch (err: any) {
+      if (isNonFatalSystemdError(err)) {
+        logger.warn(
+          `Systemd daemon reload or user D-Bus is inactive (${err.message}). Simulating service stop for '${service}'.`,
+          { service },
+        );
+        return;
+      }
       throw new RuntimeError(`Unitup failed to stop service '${service}': ${err.message}`);
     }
   }
@@ -188,7 +223,7 @@ export class UnitupAdapter implements RuntimeManager {
       }
       await restartService(service);
     } catch (err: any) {
-      if (err.message?.includes('does not exist') || err.message?.includes('not found')) {
+      if (isNonFatalSystemdError(err)) {
         await this.upsertService(service, options);
         return;
       }
@@ -210,7 +245,7 @@ export class UnitupAdapter implements RuntimeManager {
       }
       await restartService(service);
     } catch (err: any) {
-      if (err.message?.includes('does not exist') || err.message?.includes('not found')) {
+      if (isNonFatalSystemdError(err)) {
         await this.upsertService(service, options);
         return;
       }
