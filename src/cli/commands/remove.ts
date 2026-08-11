@@ -1,9 +1,10 @@
 import chalk from 'chalk';
 import { resolveProjectName } from '../../config/parser.js';
+import { UnitupAdapter } from '../../runtime/unitup-adapter.js';
 import { closeDatabase } from '../../storage/database.js';
 import { ProjectRepository } from '../../storage/project-repository.js';
 
-export function removeCommand(projectName?: string): void {
+export async function removeCommand(projectName?: string): Promise<void> {
   const targetProject = resolveProjectName(projectName);
   if (!targetProject) {
     console.error(
@@ -16,11 +17,23 @@ export function removeCommand(projectName?: string): void {
 
   try {
     const repo = new ProjectRepository();
-    const deleted = repo.deleteProject(targetProject);
+    const existingProject = repo.getProject(targetProject);
+    const unitup = new UnitupAdapter();
 
-    if (deleted) {
-      console.log(chalk.green(`✔ Removed project '${targetProject}' from Deployra registry.`));
+    if (existingProject) {
+      const serviceName = existingProject.config.deploy.service.name || targetProject;
+      await unitup.remove(serviceName);
+
+      const deleted = repo.deleteProject(targetProject);
+      if (deleted) {
+        console.log(
+          chalk.green(
+            `✔ Removed project '${targetProject}' from Deployra registry and stopped associated systemd service '${serviceName}'.`,
+          ),
+        );
+      }
     } else {
+      await unitup.remove(targetProject);
       console.log(chalk.yellow(`Project '${targetProject}' was not found in registry.`));
     }
   } catch (err: any) {

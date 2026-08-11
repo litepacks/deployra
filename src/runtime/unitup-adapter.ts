@@ -4,6 +4,7 @@ import {
   addService,
   getServiceStatus,
   isSystemctlAvailable,
+  removeService,
   restartService,
   startService,
   stopService,
@@ -72,25 +73,19 @@ export class UnitupAdapter implements RuntimeManager {
     }
   }
 
-  private async ensureServiceExists(service: string, options?: ServiceOptions): Promise<void> {
-    try {
-      if (unitFileExists(service)) {
-        return;
-      }
-    } catch {
-      // Ignore check error and attempt addService
-    }
-
-    logger.info(
-      `Service '${service}' does not exist in systemd. Auto-registering service via unitup...`,
-      {
-        service,
-        cwd: options?.cwd,
-      },
-    );
-
+  private async upsertService(service: string, options?: ServiceOptions): Promise<void> {
     const cwd = options?.cwd || process.cwd();
     const entry = resolveEntryPoint(cwd, options?.script, options?.command);
+
+    logger.info(
+      `Registering/updating systemd service '${service}' via unitup (command: ${entry.command || entry.script || 'default'})...`,
+      {
+        service,
+        cwd,
+        command: entry.command,
+        script: entry.script,
+      },
+    );
 
     try {
       await addService({
@@ -102,9 +97,11 @@ export class UnitupAdapter implements RuntimeManager {
         start: true,
         force: true,
       });
-      logger.info(`Successfully created and started service '${service}' via unitup!`, { service });
+      logger.info(`Successfully created/updated and started service '${service}' via unitup!`, {
+        service,
+      });
     } catch (err: any) {
-      throw new RuntimeError(`Unitup failed to auto-create service '${service}': ${err.message}`);
+      throw new RuntimeError(`Unitup failed to create/update service '${service}': ${err.message}`);
     }
   }
 
@@ -116,14 +113,14 @@ export class UnitupAdapter implements RuntimeManager {
       return;
     }
     try {
-      if (!unitFileExists(service)) {
-        await this.ensureServiceExists(service, options);
+      if (options || !unitFileExists(service)) {
+        await this.upsertService(service, options);
         return;
       }
       await startService(service);
     } catch (err: any) {
       if (err.message?.includes('does not exist') || err.message?.includes('not found')) {
-        await this.ensureServiceExists(service, options);
+        await this.upsertService(service, options);
         return;
       }
       throw new RuntimeError(`Unitup failed to start service '${service}': ${err.message}`);
@@ -152,14 +149,14 @@ export class UnitupAdapter implements RuntimeManager {
       return;
     }
     try {
-      if (!unitFileExists(service)) {
-        await this.ensureServiceExists(service, options);
+      if (options || !unitFileExists(service)) {
+        await this.upsertService(service, options);
         return;
       }
       await restartService(service);
     } catch (err: any) {
       if (err.message?.includes('does not exist') || err.message?.includes('not found')) {
-        await this.ensureServiceExists(service, options);
+        await this.upsertService(service, options);
         return;
       }
       throw new RuntimeError(`Unitup failed to restart service '${service}': ${err.message}`);
@@ -174,14 +171,14 @@ export class UnitupAdapter implements RuntimeManager {
       return;
     }
     try {
-      if (!unitFileExists(service)) {
-        await this.ensureServiceExists(service, options);
+      if (options || !unitFileExists(service)) {
+        await this.upsertService(service, options);
         return;
       }
       await restartService(service);
     } catch (err: any) {
       if (err.message?.includes('does not exist') || err.message?.includes('not found')) {
-        await this.ensureServiceExists(service, options);
+        await this.upsertService(service, options);
         return;
       }
       throw new RuntimeError(`Unitup failed to reload service '${service}': ${err.message}`);
@@ -215,6 +212,25 @@ export class UnitupAdapter implements RuntimeManager {
         active: false,
         subState: 'inactive',
       };
+    }
+  }
+
+  public async remove(service: string): Promise<void> {
+    if (!(await this.isSystemdAvailable())) {
+      logger.warn(
+        `Systemd is not available on this platform. Simulating service removal for '${service}'.`,
+      );
+      return;
+    }
+    try {
+      if (unitFileExists(service)) {
+        await removeService(service, { force: true });
+        logger.info(`Successfully stopped and removed unitup systemd service '${service}'`, {
+          service,
+        });
+      }
+    } catch (err: any) {
+      logger.warn(`Failed to remove unitup service '${service}': ${err.message}`, { service });
     }
   }
 }

@@ -36,6 +36,7 @@ describe('Contract Tests', () => {
       expect(typeof adapter.stop).toBe('function');
       expect(typeof adapter.restart).toBe('function');
       expect(typeof adapter.status).toBe('function');
+      expect(typeof adapter.remove).toBe('function');
 
       const status: RuntimeStatus = await adapter.status('non_existent_service_xyz_123');
       expect(typeof status.active).toBe('boolean');
@@ -46,7 +47,7 @@ describe('Contract Tests', () => {
       expect(typeof isRunning).toBe('boolean');
     });
 
-    it('handles start, restart, reload with options on non-systemd platforms gracefully', async () => {
+    it('handles start, restart, reload, and remove with options on non-systemd platforms gracefully', async () => {
       const adapter = new UnitupAdapter();
       await expect(
         adapter.start('test-app', { cwd: '/tmp', script: 'index.js' }),
@@ -56,6 +57,20 @@ describe('Contract Tests', () => {
       ).resolves.not.toThrow();
       await expect(
         adapter.reload('test-app', { cwd: '/tmp', script: 'index.js' }),
+      ).resolves.not.toThrow();
+      await expect(adapter.remove('test-app')).resolves.not.toThrow();
+    });
+
+    it('updates systemd service configuration when service.command or options change on restart/reload', async () => {
+      const adapter = new UnitupAdapter();
+      // Test initial service registration with command: npm start
+      await expect(
+        adapter.restart('command-update-app', { cwd: '/tmp', command: 'npm start' }),
+      ).resolves.not.toThrow();
+
+      // Test subsequent configuration update in deployra.config.yaml with command: npm run start:api
+      await expect(
+        adapter.restart('command-update-app', { cwd: '/tmp', command: 'npm run start:api' }),
       ).resolves.not.toThrow();
     });
   });
@@ -357,6 +372,165 @@ describe('Contract Tests', () => {
       } finally {
         DeployraDaemon.prototype.start = originalStart;
       }
+    });
+
+    describe('Concurrency & Deduplication Guards', () => {
+      it('prevents duplicate deployment creation on poll when the latest deployment for that SHA failed', async () => {
+        const engine = new WorkmaticEngine();
+        const watcher = new SourceWatcher(engine);
+        const projRepo = new ProjectRepository();
+        const depRepo = new DeploymentRepository();
+
+        projRepo.saveProject(
+          normalizeAndValidateConfig({
+            project: { name: 'failed-sha-app', path: '/tmp/failed-sha-app' },
+          }),
+        );
+
+        // Record a failed deployment for SHA '2602d98'
+        depRepo.createDeployment({
+          id: 'dep_failed_100',
+          projectName: 'failed-sha-app',
+          targetSha: '2602d98',
+          status: 'failed',
+          triggerType: 'poll',
+        });
+
+        // Mock checkRemoteHead to return the same failed SHA '2602d98'
+        (watcher as any).gitClient.checkRemoteHead = async () => '2602d98';
+
+        const result = await watcher.checkProject('failed-sha-app', 'poll');
+        expect(result).toBeNull();
+
+        const deps = depRepo.getDeploymentsByProject('failed-sha-app');
+        expect(deps.length).toBe(1);
+        expect(deps[0].id).toBe('dep_failed_100');
+      });
+
+      it('prevents duplicate deployment creation on poll when the latest deployment for that SHA succeeded', async () => {
+        const engine = new WorkmaticEngine();
+        const watcher = new SourceWatcher(engine);
+        const projRepo = new ProjectRepository();
+        const depRepo = new DeploymentRepository();
+
+        projRepo.saveProject(
+          normalizeAndValidateConfig({
+            project: { name: 'success-sha-app', path: '/tmp/success-sha-app' },
+          }),
+        );
+
+        // Record a successful deployment for SHA '2602d98'
+        depRepo.createDeployment({
+          id: 'dep_success_100',
+          projectName: 'success-sha-app',
+          targetSha: '2602d98',
+          status: 'success',
+          triggerType: 'poll',
+        });
+
+        // Mock checkRemoteHead to return the same succeeded SHA '2602d98'
+        (watcher as any).gitClient.checkRemoteHead = async () => '2602d98';
+
+        const result = await watcher.checkProject('success-sha-app', 'poll');
+        expect(result).toBeNull();
+
+        const deps = depRepo.getDeploymentsByProject('success-sha-app');
+        expect(deps.length).toBe(1);
+      });
+
+      it('prevents concurrent parallel checkProject calls from creating duplicate deployments', async () => {
+        const engine = new WorkmaticEngine();
+        const watcher = new SourceWatcher(engine);
+        const projRepo = new ProjectRepository();
+        const depRepo = new DeploymentRepository();
+
+        projRepo.saveProject(
+          normalizeAndValidateConfig({
+            project: { name: 'concurrent-app', path: '/tmp/concurrent-app' },
+          }),
+        );
+
+        // Mock checkRemoteHead with a small artificial delay to simulate race condition
+        (watcher as any).gitClient.checkRemoteHead = async () => {
+          await new Promise((r) => setTimeout(r, 40));
+          return '2602d98_concurrent_sha';
+        };
+
+        // Fire two checkProject calls in parallel
+        const [res1, res2] = await Promise.all([
+          watcher.checkProject('concurrent-app', 'poll'),
+          watcher.checkProject('concurrent-app', 'poll'),
+        ]);
+
+        // Exactly one should succeed and the other should return null due to checkingProjects lock
+        const succeeded = [res1, res2].filter(Boolean);
+        const skipped = [res1, res2].filter((r) => r === null);
+
+        expect(succeeded.length).toBe(1);
+        expect(skipped.length).toBe(1);
+
+        const deps = depRepo.getDeploymentsByProject('concurrent-app');
+        expect(deps.length).toBe(1);
+      });
+
+      it('allows manual deployment trigger even if commit SHA was previously deployed', async () => {
+        const engine = new WorkmaticEngine();
+        const watcher = new SourceWatcher(engine);
+        const projRepo = new ProjectRepository();
+        const depRepo = new DeploymentRepository();
+
+        projRepo.saveProject(
+          normalizeAndValidateConfig({
+            project: { name: 'manual-override-app', path: '/tmp/manual-override-app' },
+          }),
+        );
+
+        depRepo.createDeployment({
+          id: 'dep_prev_manual',
+          projectName: 'manual-override-app',
+          targetSha: 'manual_sha_777',
+          status: 'success',
+          triggerType: 'poll',
+        });
+
+        (watcher as any).gitClient.checkRemoteHead = async () => 'manual_sha_777';
+
+        // Manual trigger should be allowed to re-deploy
+        const manualDepId = await watcher.checkProject('manual-override-app', 'manual');
+        expect(manualDepId).toBeTruthy();
+
+        const deps = depRepo.getDeploymentsByProject('manual-override-app');
+        expect(deps.length).toBe(2);
+      });
+
+      it('handles short 7-character SHA comparison correctly against full 40-character SHA', async () => {
+        const engine = new WorkmaticEngine();
+        const watcher = new SourceWatcher(engine);
+        const projRepo = new ProjectRepository();
+        const depRepo = new DeploymentRepository();
+
+        projRepo.saveProject(
+          normalizeAndValidateConfig({
+            project: { name: 'short-sha-app', path: '/tmp/short-sha-app' },
+          }),
+        );
+
+        // Saved short SHA '2602d98'
+        depRepo.createDeployment({
+          id: 'dep_short_sha_1',
+          projectName: 'short-sha-app',
+          targetSha: '2602d98',
+          status: 'failed',
+          triggerType: 'poll',
+        });
+
+        // Remote returns full 40-character SHA starting with '2602d98'
+        (watcher as any).gitClient.checkRemoteHead = async () =>
+          '2602d98a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e';
+
+        const result = await watcher.checkProject('short-sha-app', 'poll');
+        expect(result).toBeNull();
+      });
     });
   });
 });

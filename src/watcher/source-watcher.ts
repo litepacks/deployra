@@ -15,6 +15,7 @@ export class SourceWatcher {
 
   private timers = new Map<string, NodeJS.Timeout>();
   private errorCounts = new Map<string, number>();
+  private checkingProjects = new Set<string>();
 
   private syncTimer?: NodeJS.Timeout;
   private targetProjectName?: string;
@@ -48,6 +49,7 @@ export class SourceWatcher {
     }
     this.timers.clear();
     this.errorCounts.clear();
+    this.checkingProjects.clear();
   }
 
   public async syncProjects(): Promise<void> {
@@ -63,6 +65,7 @@ export class SourceWatcher {
         clearTimeout(timer);
         this.timers.delete(name);
         this.errorCounts.delete(name);
+        this.checkingProjects.delete(name);
         logger.info(`Stopped monitoring removed project '${name}'`, { project: name });
       }
     }
@@ -94,30 +97,37 @@ export class SourceWatcher {
     triggerType: 'poll' | 'manual' | 'webhook' = 'poll',
     dryRun = false,
   ): Promise<string | null> {
+    if (this.checkingProjects.has(projectName)) {
+      logger.debug(`Check for project '${projectName}' is already in progress. Skipping concurrent check.`);
+      return null;
+    }
+
     let proj = this.projectRepo.getProject(projectName);
     if (!proj) {
       logger.error(`Cannot check project '${projectName}': not found`);
       return null;
     }
 
-    // Refresh config from disk if updated
-    try {
-      const diskConfig = loadConfigFromDir(proj.path);
-      if (diskConfig) {
-        const diskHash = computeConfigHash(diskConfig);
-        if (diskHash !== proj.configHash) {
-          proj = this.projectRepo.saveProject(diskConfig);
-          logger.info(
-            `Detected config change on disk for project '${projectName}' (version v${proj.configVersion}, hash ${proj.configHash})`,
-            { project: projectName },
-          );
-        }
-      }
-    } catch {
-      // Ignore disk config read errors on polling check
-    }
+    this.checkingProjects.add(projectName);
 
     try {
+      // Refresh config from disk if updated
+      try {
+        const diskConfig = loadConfigFromDir(proj.path);
+        if (diskConfig) {
+          const diskHash = computeConfigHash(diskConfig);
+          if (diskHash !== proj.configHash) {
+            proj = this.projectRepo.saveProject(diskConfig);
+            logger.info(
+              `Detected config change on disk for project '${projectName}' (version v${proj.configVersion}, hash ${proj.configHash})`,
+              { project: projectName },
+            );
+          }
+        }
+      } catch {
+        // Ignore disk config read errors on polling check
+      }
+
       const remoteSha = await this.gitClient.checkRemoteHead(proj.path, proj.remote, proj.branch);
       this.errorCounts.set(projectName, 0); // Reset error count on success
 
@@ -142,6 +152,16 @@ export class SourceWatcher {
           logger.debug(`No change detected for project '${projectName}' (SHA: ${remoteSha})`, {
             project: projectName,
           });
+          return null;
+        }
+
+        const latestDep = this.deploymentRepo.getLatestDeployment(projectName);
+        if (latestDep && isSameSha(latestDep.targetSha, remoteSha)) {
+          logger.info(
+            `Latest deployment #${latestDep.id} for project '${projectName}' already targeted commit SHA ${remoteSha} (status: ${latestDep.status}). Skipping duplicate polling trigger.`,
+            { project: projectName, deploymentId: latestDep.id },
+          );
+          this.projectRepo.updateLastSeenSha(projectName, remoteSha);
           return null;
         }
 
@@ -216,6 +236,8 @@ export class SourceWatcher {
         },
       );
       throw err;
+    } finally {
+      this.checkingProjects.delete(projectName);
     }
   }
 

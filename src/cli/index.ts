@@ -65,9 +65,9 @@ program
 
 program
   .command('remove [projectName]')
-  .description('Remove a project from Deployra registry')
-  .action((projectName) => {
-    removeCommand(projectName);
+  .description('Remove a project from Deployra registry and stop associated systemd service')
+  .action(async (projectName) => {
+    await removeCommand(projectName);
   });
 
 program

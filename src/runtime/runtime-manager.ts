@@ -23,4 +23,5 @@ export interface RuntimeManager {
   restart(service: string, options?: ServiceOptions): Promise<void>;
   reload(service: string, options?: ServiceOptions): Promise<void>;
   status(service: string): Promise<RuntimeStatus>;
+  remove(service: string): Promise<void>;
 }
