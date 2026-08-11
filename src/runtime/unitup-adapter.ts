@@ -14,13 +14,46 @@ import { RuntimeError } from '../errors/deployra-error.js';
 import { logger } from '../logging/logger.js';
 import type { RuntimeManager, RuntimeStatus, ServiceOptions } from './runtime-manager.js';
 
+export function parseCommandString(command: string): { command: string; args?: string[] } {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return { command: '' };
+  }
+
+  const tokens: string[] = [];
+  const regex = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(trimmed)) !== null) {
+    if (match[1] !== undefined) {
+      tokens.push(match[1]);
+    } else if (match[2] !== undefined) {
+      tokens.push(match[2]);
+    } else {
+      tokens.push(match[0]);
+    }
+  }
+
+  if (tokens.length === 0) {
+    return { command: trimmed };
+  }
+
+  const binary = tokens[0];
+  const args = tokens.slice(1);
+
+  return {
+    command: binary,
+    ...(args.length > 0 ? { args } : {}),
+  };
+}
+
 function resolveEntryPoint(
   cwd?: string,
   script?: string,
   command?: string,
-): { script?: string; command?: string } {
+): { script?: string; command?: string; args?: string[] } {
   if (command) {
-    return { command };
+    return parseCommandString(command);
   }
   if (script) {
     return { script };
@@ -35,7 +68,7 @@ function resolveEntryPoint(
           return { script: pkg.main };
         }
         if (pkg.scripts?.start) {
-          return { command: 'npm start' };
+          return { command: 'npm', args: ['start'] };
         }
       } catch {
         // Ignore JSON parse errors

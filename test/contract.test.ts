@@ -11,7 +11,7 @@ import {
 } from '../src/readiness/ready-checker-adapter.js';
 import { isDaemonRunning } from '../src/runtime/daemon-check.js';
 import type { RuntimeManager, RuntimeStatus } from '../src/runtime/runtime-manager.js';
-import { UnitupAdapter } from '../src/runtime/unitup-adapter.js';
+import { parseCommandString, UnitupAdapter } from '../src/runtime/unitup-adapter.js';
 import { safeExec } from '../src/security/exec.js';
 import { closeDatabase, resetDatabase } from '../src/storage/database.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
@@ -72,6 +72,28 @@ describe('Contract Tests', () => {
       await expect(
         adapter.restart('command-update-app', { cwd: '/tmp', command: 'npm run start:api' }),
       ).resolves.not.toThrow();
+    });
+
+    it('correctly parses command strings into binary executable and args array without searching for index.js', () => {
+      expect(parseCommandString('npm run start:api')).toEqual({
+        command: 'npm',
+        args: ['run', 'start:api'],
+      });
+      expect(parseCommandString('npm start')).toEqual({
+        command: 'npm',
+        args: ['start'],
+      });
+      expect(parseCommandString('node server.js')).toEqual({
+        command: 'node',
+        args: ['server.js'],
+      });
+      expect(parseCommandString('python3 main.py --port 8000')).toEqual({
+        command: 'python3',
+        args: ['main.py', '--port', '8000'],
+      });
+      expect(parseCommandString('./my-binary')).toEqual({
+        command: './my-binary',
+      });
     });
   });
 
