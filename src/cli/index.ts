@@ -96,7 +96,10 @@ program
 program
   .command('deploy [projectName]')
   .description('Trigger a manual deployment for a project')
-  .option('-d, --dry-run', 'Simulate deployment pipeline without executing shell or service commands')
+  .option(
+    '-d, --dry-run',
+    'Simulate deployment pipeline without executing shell or service commands',
+  )
   .action(async (projectName, options) => {
     await deployCommand(projectName, options);
   });

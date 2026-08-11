@@ -98,7 +98,9 @@ export class SourceWatcher {
     dryRun = false,
   ): Promise<string | null> {
     if (this.checkingProjects.has(projectName)) {
-      logger.debug(`Check for project '${projectName}' is already in progress. Skipping concurrent check.`);
+      logger.debug(
+        `Check for project '${projectName}' is already in progress. Skipping concurrent check.`,
+      );
       return null;
     }
 

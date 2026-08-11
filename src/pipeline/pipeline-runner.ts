@@ -55,7 +55,13 @@ export class DeploymentPipelineRunner {
 
       // Step 2: validate-repository
       await this.runStep(deploymentId, 'validate-repository', async () => {
-        await this.validateAndPrepareRepository(workingDir, project.path, config, isIsolated, isDryRun);
+        await this.validateAndPrepareRepository(
+          workingDir,
+          project.path,
+          config,
+          isIsolated,
+          isDryRun,
+        );
       });
 
       // Step 3: fetch
