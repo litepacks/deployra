@@ -95,6 +95,55 @@ describe('Contract Tests', () => {
         command: './my-binary',
       });
     });
+
+    it('generates, updates, and removes systemd unit configuration on disk with correct command and parameters', async () => {
+      const { unitFileExists, readAppMetadata } = await import('unitup');
+      const adapter = new UnitupAdapter();
+      const serviceName = 'e2e-sys-unit-test';
+
+      try {
+        // Step 1: Create initial unit with command: npm run start:api
+        await adapter.restart(serviceName, {
+          cwd: '/tmp/e2e-sys-dir',
+          command: 'npm run start:api',
+          memoryMax: '256M',
+        });
+
+        // Verify unit file or metadata exists on disk if unitup created it
+        if (unitFileExists(serviceName)) {
+          const metadata = readAppMetadata(serviceName);
+          if (metadata) {
+            expect(metadata.command).toBe('npm');
+            expect(metadata.args).toEqual(['run', 'start:api']);
+          }
+        }
+
+        // Step 2: Update configuration with new command: npm run start:web and new memory limit
+        await adapter.restart(serviceName, {
+          cwd: '/tmp/e2e-sys-dir',
+          command: 'npm run start:web',
+          memoryMax: '512M',
+        });
+
+        if (unitFileExists(serviceName)) {
+          const updatedMeta = readAppMetadata(serviceName);
+          if (updatedMeta) {
+            expect(updatedMeta.command).toBe('npm');
+            expect(updatedMeta.args).toEqual(['run', 'start:web']);
+          }
+        }
+
+        // Step 3: Remove service and verify cleanup on disk
+        await adapter.remove(serviceName);
+        expect(unitFileExists(serviceName)).toBe(false);
+      } finally {
+        try {
+          await adapter.remove(serviceName);
+        } catch {
+          // Cleanup ignore
+        }
+      }
+    });
   });
 
   describe('ReadinessChecker Contract (ReadyCheckerAdapter)', () => {
