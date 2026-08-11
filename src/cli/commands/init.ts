@@ -40,6 +40,7 @@ deploy:
   service:
     name: api
     action: restart
+    # command: npm start # Optional custom start command (e.g. npm run start:api)
 
   ready:
     url: http://127.0.0.1:3000/health

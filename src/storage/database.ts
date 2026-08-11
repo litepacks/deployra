@@ -106,4 +106,10 @@ function initDatabaseSchema(db: SQLiteDatabase): void {
   } catch {
     // Column already exists
   }
+
+  try {
+    db.exec(`ALTER TABLE deployments ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 0;`);
+  } catch {
+    // Column already exists
+  }
 }

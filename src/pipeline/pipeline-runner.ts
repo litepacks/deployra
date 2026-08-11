@@ -39,6 +39,7 @@ export class DeploymentPipelineRunner {
     let config = project.config;
     const isIsolated = config.deploy.strategy === 'isolated';
     const workingDir = isIsolated ? config.deploy.workspacePath : project.path;
+    const isDryRun = Boolean(payload.dryRun);
     let lockAcquired = false;
 
     this.deploymentRepo.updateStatus(deploymentId, 'running');
@@ -54,16 +55,30 @@ export class DeploymentPipelineRunner {
 
       // Step 2: validate-repository
       await this.runStep(deploymentId, 'validate-repository', async () => {
-        await this.validateAndPrepareRepository(workingDir, project.path, config, isIsolated);
+        await this.validateAndPrepareRepository(workingDir, project.path, config, isIsolated, isDryRun);
       });
 
       // Step 3: fetch
       await this.runStep(deploymentId, 'fetch', async () => {
-        await this.gitClient.fetchBranch(workingDir, config.source.remote, config.source.branch);
+        if (isDryRun) {
+          logger.info(
+            `[DRY-RUN] Simulated fetch for remote '${config.source.remote}' branch '${config.source.branch}'`,
+            { project: projectName, deploymentId },
+          );
+        } else {
+          await this.gitClient.fetchBranch(workingDir, config.source.remote, config.source.branch);
+        }
       });
 
       // Step 4: resolve-target
       await this.runStep(deploymentId, 'resolve-target', async () => {
+        if (isDryRun && targetSha) {
+          logger.info(`[DRY-RUN] Target SHA resolved: ${targetSha}`, {
+            project: projectName,
+            deploymentId,
+          });
+          return;
+        }
         const resolvedHead = await this.gitClient.checkRemoteHead(
           workingDir,
           config.source.remote,
@@ -78,14 +93,23 @@ export class DeploymentPipelineRunner {
 
       // Step 5: prepare
       await this.runStep(deploymentId, 'prepare', async () => {
-        await this.gitClient.resetHard(workingDir, targetSha);
+        if (isDryRun) {
+          logger.info(
+            `[DRY-RUN] Would reset repository workspace at '${workingDir}' to target SHA '${targetSha}'`,
+            { project: projectName, deploymentId },
+          );
+        } else {
+          await this.gitClient.resetHard(workingDir, targetSha);
+        }
       });
 
       // Step 5.5: refresh-config
       await this.runStep(deploymentId, 'refresh-config', async () => {
-        const updatedConfig = this.reloadConfigFromWorkingDir(workingDir, config);
-        if (updatedConfig) {
-          config = updatedConfig;
+        if (!isDryRun) {
+          const updatedConfig = this.reloadConfigFromWorkingDir(workingDir, config);
+          if (updatedConfig) {
+            config = updatedConfig;
+          }
         }
       });
 
@@ -97,28 +121,48 @@ export class DeploymentPipelineRunner {
         project.path,
         config,
         isIsolated,
+        isDryRun,
       );
 
       // Step 8: service-action
       await this.runStep(deploymentId, 'service-action', async () => {
-        await this.performServiceAction(project.path, config);
+        await this.performServiceAction(project.path, config, isDryRun);
       });
 
       // Step 9: ready-check
       await this.runStep(deploymentId, 'ready-check', async () => {
         if (config.deploy.ready.checks.length > 0) {
-          const res = await this.readyAdapter.wait(config.deploy.ready);
-          this.deploymentRepo.updateReadyCheckResult(deploymentId, res);
+          if (isDryRun) {
+            logger.info(
+              `[DRY-RUN] Simulated ${config.deploy.ready.checks.length} readiness check(s)`,
+              { project: projectName, deploymentId },
+            );
+            this.deploymentRepo.updateReadyCheckResult(deploymentId, {
+              dryRun: true,
+              simulated: true,
+              checksCount: config.deploy.ready.checks.length,
+            });
+          } else {
+            const res = await this.readyAdapter.wait(config.deploy.ready);
+            this.deploymentRepo.updateReadyCheckResult(deploymentId, res);
+          }
         }
       });
 
       // Step 10: complete
       await this.runStep(deploymentId, 'complete', async () => {
-        this.projectRepo.updateLastSuccessfulSha(projectName, targetSha);
+        if (!isDryRun) {
+          this.projectRepo.updateLastSuccessfulSha(projectName, targetSha);
+        } else {
+          logger.info(
+            `[DRY-RUN] Skipping production lastSuccessfulSha update for project '${projectName}'`,
+            { project: projectName, deploymentId },
+          );
+        }
         this.deploymentRepo.updateStatus(deploymentId, 'success');
         logger.info(
-          `Deployment #${deploymentId} successfully completed for project '${projectName}'!`,
-          { project: projectName, deploymentId },
+          `${isDryRun ? '[DRY-RUN] ' : ''}Deployment #${deploymentId} successfully completed for project '${projectName}'!`,
+          { project: projectName, deploymentId, dryRun: isDryRun },
         );
       });
     } catch (err: any) {
@@ -150,7 +194,14 @@ export class DeploymentPipelineRunner {
     projectPath: string,
     config: NormalizedDeployraConfig,
     isIsolated: boolean,
+    isDryRun = false,
   ): Promise<void> {
+    if (isDryRun) {
+      logger.info(
+        `[DRY-RUN] Validating repository structure at '${workingDir}' (no changes will be applied)`,
+      );
+      return;
+    }
     if (isIsolated) {
       if (!fs.existsSync(workingDir)) {
         fs.mkdirSync(workingDir, { recursive: true });
@@ -192,20 +243,28 @@ export class DeploymentPipelineRunner {
     projectPath: string,
     config: NormalizedDeployraConfig,
     isIsolated: boolean,
+    isDryRun = false,
   ): Promise<void> {
     for (const [stepName, cmdList] of Object.entries(config.deploy.commands)) {
       if (Array.isArray(cmdList) && cmdList.length > 0) {
         await this.runStep(deploymentId, stepName, async () => {
           for (const cmdStr of cmdList) {
-            await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry);
+            await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry, isDryRun);
           }
 
           if (stepName === 'build' && isIsolated) {
-            logger.info(
-              `Syncing built artifacts from isolated workspace '${workingDir}' to target '${projectPath}'`,
-              { project: projectName, deploymentId },
-            );
-            await this.syncIsolatedWorkspace(workingDir, projectPath);
+            if (isDryRun) {
+              logger.info(
+                `[DRY-RUN] Would sync built artifacts from isolated workspace '${workingDir}' to target '${projectPath}'`,
+                { project: projectName, deploymentId },
+              );
+            } else {
+              logger.info(
+                `Syncing built artifacts from isolated workspace '${workingDir}' to target '${projectPath}'`,
+                { project: projectName, deploymentId },
+              );
+              await this.syncIsolatedWorkspace(workingDir, projectPath);
+            }
           }
         });
       }
@@ -215,6 +274,7 @@ export class DeploymentPipelineRunner {
   private async performServiceAction(
     projectPath: string,
     config: NormalizedDeployraConfig,
+    isDryRun = false,
   ): Promise<void> {
     const action = config.deploy.service.action;
     const svcName = config.deploy.service.name;
@@ -227,6 +287,14 @@ export class DeploymentPipelineRunner {
       cpuQuota: config.deploy.service.cpuQuota,
       restartSec: config.deploy.service.restartSec,
     };
+
+    if (isDryRun) {
+      logger.info(
+        `[DRY-RUN] Would execute service action '${action}' on systemd service '${svcName}' (cwd: ${projectPath})`,
+        { service: svcName, action, opts: svcOpts },
+      );
+      return;
+    }
 
     if (action === 'start') {
       await this.unitupAdapter.start(svcName, svcOpts);
@@ -311,7 +379,12 @@ export class DeploymentPipelineRunner {
     cmdStr: string,
     cwd: string,
     retryConfig: { attempts: number; backoffMs: number },
+    isDryRun = false,
   ): Promise<void> {
+    if (isDryRun) {
+      logger.info(`[DRY-RUN] Would execute command: '${cmdStr}' in working directory '${cwd}'`);
+      return;
+    }
     const parts = cmdStr.split(' ');
     const cmd = parts[0];
     const args = parts.slice(1);

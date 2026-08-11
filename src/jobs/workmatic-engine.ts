@@ -18,6 +18,7 @@ export interface DeploymentJobPayload {
   previousSha?: string;
   targetSha: string;
   triggerType: 'poll' | 'manual' | 'webhook';
+  dryRun?: boolean;
   triggeredAt: number;
 }
 

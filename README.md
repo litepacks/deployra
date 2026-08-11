@@ -162,9 +162,9 @@ deployra watch
 | `deployra add [configPath]` | Register a project configuration with Deployra |
 | `deployra remove [app]` | Deregister a project from Deployra registry |
 | `deployra list` | List all registered projects and SHA statuses |
-| `deployra watch [app]` | Start long-running polling daemon |
+| `deployra watch [app] [-d]` | Start long-running polling daemon (`--dry-run` to simulate) |
 | `deployra check [app]` | Perform a one-shot remote change check |
-| `deployra deploy [app]` | Trigger a manual deployment |
+| `deployra deploy [app] [-d]` | Trigger a deployment (`--dry-run` to simulate without executing commands) |
 | `deployra cancel [target]` | Cancel an active or queued deployment |
 | `deployra status [app]` | View status summary of projects |
 | `deployra stats [app]` | Display deployment metrics and success statistics |
@@ -201,6 +201,10 @@ deployra watch
 - `commands.build` (array of strings): Application compilation/build shell commands.
 - `service.name` (string): Unitup systemd service name (defaults to `project.name`).
 - `service.action` (enum: `start` | `restart` | `reload` | `none`, default: `restart`): Action performed on service.
+- `service.command` (string, optional): Custom start command for service execution (e.g. `npm run start:api`).
+- `service.script` (string, optional): Entrypoint script path (e.g. `dist/index.js` or `server.js`).
+- `service.memoryMax` (string, optional): Systemd memory limit (e.g. `512M`, `1G`).
+- `service.restartSec` (string, optional): Restart delay interval (e.g. `5s`).
 - `ready` (object): Post-deployment readiness check specifications.
 - `rollback.enabled` (boolean, default: `true`): Auto-rollback trigger toggle.
 

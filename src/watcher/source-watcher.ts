@@ -18,13 +18,15 @@ export class SourceWatcher {
 
   private syncTimer?: NodeJS.Timeout;
   private targetProjectName?: string;
+  private isDryRun = false;
 
   constructor(workmaticEngine: WorkmaticEngine) {
     this.workmaticEngine = workmaticEngine;
   }
 
-  public async start(targetProjectName?: string): Promise<void> {
+  public async start(targetProjectName?: string, dryRun = false): Promise<void> {
     this.targetProjectName = targetProjectName;
+    this.isDryRun = dryRun;
     await this.syncProjects();
 
     // Periodically re-sync registry every 5 seconds to pick up new/removed projects dynamically
@@ -90,6 +92,7 @@ export class SourceWatcher {
   public async checkProject(
     projectName: string,
     triggerType: 'poll' | 'manual' | 'webhook' = 'poll',
+    dryRun = false,
   ): Promise<string | null> {
     let proj = this.projectRepo.getProject(projectName);
     if (!proj) {
@@ -155,7 +158,7 @@ export class SourceWatcher {
       this.projectRepo.updateLastSeenSha(projectName, remoteSha);
 
       logger.info(
-        `New commit detected for '${projectName}': ${remoteSha} (previous: ${proj.lastSuccessfulSha || 'none'})`,
+        `${dryRun ? '[DRY-RUN] ' : ''}New commit detected for '${projectName}': ${remoteSha} (previous: ${proj.lastSuccessfulSha || 'none'})`,
         {
           project: projectName,
         },
@@ -187,6 +190,7 @@ export class SourceWatcher {
         targetSha: remoteSha,
         status: 'queued',
         triggerType,
+        dryRun,
       });
 
       // Enqueue job via Workmatic
@@ -196,6 +200,7 @@ export class SourceWatcher {
         previousSha: proj.lastSuccessfulSha,
         targetSha: remoteSha,
         triggerType,
+        dryRun,
         triggeredAt: Date.now(),
       });
 
@@ -235,7 +240,7 @@ export class SourceWatcher {
     const timer = setTimeout(async () => {
       let currentErrorCount = this.errorCounts.get(projectName) || 0;
       try {
-        await this.checkProject(projectName, 'poll');
+        await this.checkProject(projectName, 'poll', this.isDryRun);
         currentErrorCount = 0;
       } catch {
         currentErrorCount = (this.errorCounts.get(projectName) || 0) + 1;

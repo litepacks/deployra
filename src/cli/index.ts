@@ -81,8 +81,9 @@ program
 program
   .command('watch [projectName]')
   .description('Start long-running deployment watcher daemon')
-  .action(async (projectName) => {
-    await watchCommand(projectName);
+  .option('-d, --dry-run', 'Run daemon in simulation mode without executing real commands')
+  .action(async (projectName, options) => {
+    await watchCommand(projectName, options);
   });
 
 program
@@ -95,8 +96,9 @@ program
 program
   .command('deploy [projectName]')
   .description('Trigger a manual deployment for a project')
-  .action(async (projectName) => {
-    await deployCommand(projectName);
+  .option('-d, --dry-run', 'Simulate deployment pipeline without executing shell or service commands')
+  .action(async (projectName, options) => {
+    await deployCommand(projectName, options);
   });
 
 program

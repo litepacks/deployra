@@ -29,6 +29,7 @@ export interface DeploymentRecord {
   targetSha: string;
   status: DeploymentStatus;
   triggerType: 'poll' | 'manual' | 'webhook';
+  dryRun?: boolean;
   createdAt: number;
   startedAt?: number;
   completedAt?: number;
@@ -45,6 +46,7 @@ export class DeploymentRepository {
     targetSha: string;
     status?: DeploymentStatus;
     triggerType: 'poll' | 'manual' | 'webhook';
+    dryRun?: boolean;
     steps?: string[];
   }): DeploymentRecord {
     const db = getDatabase();
@@ -52,8 +54,8 @@ export class DeploymentRepository {
     const status = data.status || 'queued';
 
     db.prepare(`
-      INSERT INTO deployments (id, project_name, previous_sha, target_sha, status, trigger_type, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO deployments (id, project_name, previous_sha, target_sha, status, trigger_type, dry_run, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.id,
       data.projectName,
@@ -61,6 +63,7 @@ export class DeploymentRepository {
       data.targetSha,
       status,
       data.triggerType,
+      data.dryRun ? 1 : 0,
       createdAt,
     );
 
@@ -189,6 +192,7 @@ export class DeploymentRepository {
       targetSha: row.target_sha,
       status: row.status,
       triggerType: row.trigger_type,
+      dryRun: Boolean(row.dry_run),
       createdAt: row.created_at,
       startedAt: row.started_at || undefined,
       completedAt: row.completed_at || undefined,

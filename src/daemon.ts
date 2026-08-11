@@ -20,15 +20,19 @@ export class DeployraDaemon {
     this.stateRepo = new StateRepository();
   }
 
-  public async start(targetProjectName?: string): Promise<void> {
+  public async start(targetProjectName?: string, dryRun = false): Promise<void> {
     try {
-      logger.info('Starting Deployra Deployment Daemon...');
+      logger.info(
+        `${dryRun ? '[DRY-RUN MODE] ' : ''}Starting Deployra Deployment Daemon...`,
+      );
 
       this.registerSignalHandlers();
       await this.workmaticEngine.startWorker();
-      await this.watcher.start(targetProjectName);
+      await this.watcher.start(targetProjectName, dryRun);
 
-      logger.info('Deployra Daemon is up and running.');
+      logger.info(
+        `${dryRun ? '[DRY-RUN MODE] ' : ''}Deployra Daemon is up and running.`,
+      );
     } catch (err: any) {
       logger.error(`Fatal error starting Deployra Daemon: ${err.message}`, { error: err });
       throw err;
