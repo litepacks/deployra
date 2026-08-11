@@ -119,7 +119,11 @@ export class UnitupAdapter implements RuntimeManager {
       return this.systemdAvailabilityCache;
     }
     try {
-      this.systemdAvailabilityCache = await isUserSystemdAvailable();
+      const checkPromise = isUserSystemdAvailable();
+      const timeoutPromise = new Promise<boolean>((resolve) =>
+        setTimeout(() => resolve(false), 1500),
+      );
+      this.systemdAvailabilityCache = await Promise.race([checkPromise, timeoutPromise]);
       return this.systemdAvailabilityCache;
     } catch {
       this.systemdAvailabilityCache = false;

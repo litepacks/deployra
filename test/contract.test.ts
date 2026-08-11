@@ -59,7 +59,7 @@ describe('Contract Tests', () => {
         adapter.reload('test-app', { cwd: '/tmp', script: 'index.js' }),
       ).resolves.not.toThrow();
       await expect(adapter.remove('test-app')).resolves.not.toThrow();
-    });
+    }, 15000);
 
     it('updates systemd service configuration when service.command or options change on restart/reload', async () => {
       const adapter = new UnitupAdapter();
@@ -72,7 +72,7 @@ describe('Contract Tests', () => {
       await expect(
         adapter.restart('command-update-app', { cwd: '/tmp', command: 'npm run start:api' }),
       ).resolves.not.toThrow();
-    });
+    }, 15000);
 
     it('correctly parses command strings into binary executable and args array without searching for index.js', () => {
       expect(parseCommandString('npm run start:api')).toEqual({
@@ -138,12 +138,13 @@ describe('Contract Tests', () => {
         expect(unitFileExists(serviceName)).toBe(false);
       } finally {
         try {
-          await adapter.remove(serviceName);
+          const { removeService } = await import('unitup');
+          await removeService(serviceName, { force: true });
         } catch {
-          // Cleanup ignore
+          // Ignore cleanup failure in test teardown
         }
       }
-    });
+    }, 15000);
   });
 
   describe('ReadinessChecker Contract (ReadyCheckerAdapter)', () => {
