@@ -4,7 +4,7 @@ Lightweight, platform-independent & language-agnostic VPS deployment orchestrato
 
 ## What is Deployra?
 
-Deployra is a 100% language and framework-independent VPS deployment orchestrator. Whether your application is built with **Node.js, Go, Python, Rust, PHP, Java, Ruby, Docker binaries, or static HTML**, Deployra automatically monitors remote Git repositories, queues background deployments via an embedded execution engine (**Workmatic**), manages systemd service lifecycles via **Unitup**, verifies application post-deploy readiness via **Ready-checker**, and executes automated rollbacks on failure.
+Deployra is a 100% language and framework-independent VPS deployment orchestrator. Whether your application is built with **Node.js, Go, Python, Rust, PHP, Java, Ruby, Docker binaries, or static HTML**, Deployra automatically monitors remote Git repositories, queues background deployments via an embedded execution engine ([Workmatic](https://github.com/litepacks/workmatic)), manages systemd service lifecycles via [Unitup](https://github.com/litepacks/unitup), verifies application post-deploy readiness via [Ready-checker](https://github.com/litepacks/ready-checker), and executes automated rollbacks on failure.
 
 ---
 
@@ -52,7 +52,7 @@ graph TD
 ```
 
 > [!NOTE]
-> **Internal Execution Engines**: Deployra integrates `workmatic` (persistent SQLite job queue), `unitup` (systemd service manager), and `ready-checker` (application readiness engine) as internal implementation layers. Users **never** have to write package names like `workmatic`, `unitup`, or `ready-checker` in their configuration files.
+> **Internal Execution Engines**: Deployra integrates [`workmatic`](https://github.com/litepacks/workmatic) (persistent SQLite job queue), [`unitup`](https://github.com/litepacks/unitup) (systemd service manager), and [`ready-checker`](https://github.com/litepacks/ready-checker) (application readiness engine) as internal implementation layers. Users **never** have to write package names like `workmatic`, `unitup`, or `ready-checker` in their configuration files.
 
 ---
 
@@ -60,9 +60,9 @@ graph TD
 
 - 🌐 **Language & Framework Agnostic**: Deploys any stack (Node.js, Go, Python, Rust, PHP, Java, Docker, Static HTML) without language-specific plugins.
 - 🔄 **Provider-Independent Polling**: Uses lightweight `git ls-remote` for remote SHA change detection.
-- ⚡ **Workmatic Engine Integration**: Persistent background job queue with concurrency locks (`1` per project by default) and configurable queue modes (`latest`, `fifo`, `reject`).
-- 🛠 **Systemd Service Management**: Zero-downtime service restart and reload powered by Unitup.
-- 🩺 **Comprehensive Readiness Verification**: Supports HTTP, HTTPS, TCP, command, process, and file checks in `all`, `any`, or `sequence` modes.
+- ⚡ **Workmatic Engine Integration**: Persistent background job queue powered by [Workmatic](https://github.com/litepacks/workmatic) with concurrency locks (`1` per project by default) and configurable queue modes (`latest`, `fifo`, `reject`).
+- 🛠 **Systemd Service Management**: Automated systemd service restart and reload powered by [Unitup](https://github.com/litepacks/unitup).
+- 🩺 **Comprehensive Readiness Verification**: Post-deploy health verification powered by [Ready-checker](https://github.com/litepacks/ready-checker) (HTTP, HTTPS, TCP, command, process, file checks).
 - ⏪ **Automated Rollback**: Reverts repository to previous successful commit SHA and restarts service on deployment failures.
 - 🔐 **Security & Secret Masking**: Command execution with argument arrays (no shell injection risk) and automatic redaction of tokens/passwords from logs.
 - 📦 **SQLite Persistence**: Stores projects, locks, deployment histories, and step metrics reliably.

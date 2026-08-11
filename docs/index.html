@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en" class="dark scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deployra | Lightweight VPS Deployment Orchestrator</title>
+  <meta name="description" content="Deployra is a lightweight, language-agnostic VPS deployment orchestrator with automated Git polling, Workmatic background job queueing, Systemd service management, readiness verification, auto-rollback, and dry-run simulation.">
+  <meta name="keywords" content="deployra, deployment, vps, orchestrator, systemd, git, CI/CD, nodejs, devops">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#f0f6ff',
+              100: '#e0edff',
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              900: '#1e3a8a',
+              950: '#0f172a',
+            },
+            accent: {
+              cyan: '#06b6d4',
+              emerald: '#10b981',
+              amber: '#f59e0b',
+              rose: '#f43f5e',
+              violet: '#8b5cf6',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0b0f19;
+      color: #f3f4f6;
+    }
+    .glass-card {
+      background: rgba(17, 24, 39, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glass-card-hover {
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .glass-card-hover:hover {
+      transform: translateY(-4px);
+      border-color: rgba(59, 130, 246, 0.4);
+      box-shadow: 0 12px 30px -10px rgba(37, 99, 235, 0.3);
+    }
+    .gradient-text {
+      background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 50%, #f472b6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .gradient-bg {
+      background: radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.18) 0%, rgba(11, 15, 25, 0) 70%);
+    }
+  </style>
+</head>
+<body class="min-h-screen antialiased selection:bg-brand-500 selection:text-white">
+
+  <!-- Header / Navigation -->
+  <header class="sticky top-0 z-50 glass-card border-b border-gray-800/80">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <a href="#" class="flex items-center space-x-3 group">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-accent-violet flex items-center justify-center text-white text-xl font-black shadow-lg shadow-brand-500/20 group-hover:scale-105 transition-transform">
+          🚀
+        </div>
+        <span class="text-xl font-bold tracking-tight text-white">Deployra</span>
+        <span class="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-brand-500/10 text-brand-400 border border-brand-500/20">v0.1.6</span>
+      </a>
+
+      <nav class="hidden md:flex items-center space-x-8 text-sm font-medium text-gray-300">
+        <a href="#quickstart" class="hover:text-brand-400 transition-colors">Quick Start</a>
+        <a href="#features" class="hover:text-brand-400 transition-colors">Features</a>
+        <a href="#architecture" class="hover:text-brand-400 transition-colors">Architecture</a>
+        <a href="#config" class="hover:text-brand-400 transition-colors">Configuration</a>
+        <a href="#cli" class="hover:text-brand-400 transition-colors">CLI Commands</a>
+        <a href="#dry-run" class="hover:text-brand-400 transition-colors flex items-center gap-1.5 text-accent-amber">
+          <span>⚡ Dry-Run</span>
+          <span class="w-2 h-2 rounded-full bg-accent-amber animate-pulse"></span>
+        </a>
+      </nav>
+
+      <div class="flex items-center space-x-4">
+        <a href="https://github.com/litepacks/gitship" target="_blank" rel="noopener noreferrer" id="github-link" class="inline-flex items-center space-x-2 px-4 py-2 text-sm font-medium rounded-lg bg-gray-800/80 hover:bg-gray-700 text-gray-200 border border-gray-700 transition-colors">
+          <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="relative pt-20 pb-16 overflow-hidden gradient-bg">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
+      
+      <!-- Top Pill -->
+      <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full glass-card text-xs font-semibold text-brand-400 border border-brand-500/30 mb-8 animate-fade-in">
+        <span class="w-2 h-2 rounded-full bg-accent-emerald animate-ping"></span>
+        <span>Lightweight, Independent VPS Deployment Engine</span>
+      </div>
+
+      <!-- Main Headline -->
+      <h1 class="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white max-w-5xl mx-auto leading-tight mb-6">
+        Automated VPS Deployments for <span class="gradient-text">Any Language or Framework</span>
+      </h1>
+
+      <p class="text-lg sm:text-xl text-gray-400 max-w-3xl mx-auto leading-relaxed mb-10">
+        Deployra is a 100% platform-independent deployment orchestrator. It monitors Git repositories, manages background queues via <a href="https://github.com/litepacks/workmatic" target="_blank" rel="noopener noreferrer" class="text-brand-400 font-semibold hover:underline">Workmatic</a>, controls systemd services via <a href="https://github.com/litepacks/unitup" target="_blank" rel="noopener noreferrer" class="text-brand-400 font-semibold hover:underline">Unitup</a>, verifies health checks, and auto-rolls back on failure.
+      </p>
+
+      <!-- CTA Buttons -->
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+        <a href="#quickstart" class="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400 text-white font-semibold shadow-lg shadow-brand-500/25 transition-all transform hover:-translate-y-0.5">
+          Get Started in 60s
+        </a>
+        <a href="#cli" class="w-full sm:w-auto px-8 py-3.5 rounded-xl glass-card hover:bg-gray-800 text-gray-200 font-semibold border border-gray-700 transition-all">
+          Explore CLI Commands
+        </a>
+      </div>
+
+      <!-- Terminal Mockup -->
+      <div class="max-w-4xl mx-auto rounded-2xl glass-card border border-gray-800 shadow-2xl overflow-hidden text-left">
+        <!-- Terminal Header -->
+        <div class="bg-gray-900/90 px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <div class="w-3 h-3 rounded-full bg-rose-500/80"></div>
+            <div class="w-3 h-3 rounded-full bg-amber-500/80"></div>
+            <div class="w-3 h-3 rounded-full bg-emerald-500/80"></div>
+            <span class="text-xs font-mono text-gray-400 ml-2">bash — deployra watch --dry-run</span>
+          </div>
+          <span class="text-xs font-mono text-accent-amber font-semibold">⚡ DRY-RUN SIMULATION ACTIVE</span>
+        </div>
+        <!-- Terminal Body -->
+        <div class="p-6 font-mono text-sm leading-relaxed overflow-x-auto space-y-2 bg-gray-950/80">
+          <div class="text-gray-400">$ deployra deploy my-api <span class="text-accent-amber">--dry-run</span></div>
+          <div class="text-amber-400 font-semibold">⚡ [DRY-RUN MODE] Simulating deployment for 'my-api'...</div>
+          <div class="text-blue-400">[INFO] [DRY-RUN] Validating repository structure at '/var/www/my-api'</div>
+          <div class="text-blue-400">[INFO] [DRY-RUN] Target SHA resolved: 973f5de2a1</div>
+          <div class="text-blue-400">[INFO] [DRY-RUN] Would execute command: 'npm ci' in '/var/www/my-api'</div>
+          <div class="text-blue-400">[INFO] [DRY-RUN] Would execute command: 'npm run build' in '/var/www/my-api'</div>
+          <div class="text-blue-400">[INFO] [DRY-RUN] Would execute service action 'restart' on systemd service 'api'</div>
+          <div class="text-emerald-400 font-semibold">✔ [DRY-RUN] Deployment simulation #dep_x91A2 completed successfully! Zero system changes applied.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick Start Section -->
+  <section id="quickstart" class="py-20 border-t border-gray-800/60 bg-gray-900/40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center max-w-3xl mx-auto mb-16">
+        <h2 class="text-xs font-bold uppercase tracking-widest text-brand-400 mb-3">Quick Start</h2>
+        <p class="text-3xl sm:text-4xl font-extrabold text-white">Up and Running in 4 Easy Steps</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <!-- Step 1 -->
+        <div class="glass-card p-6 rounded-2xl relative">
+          <div class="w-8 h-8 rounded-lg bg-brand-500/20 text-brand-400 font-bold flex items-center justify-center text-sm mb-4">1</div>
+          <h3 class="text-lg font-bold text-white mb-2">Install Globally</h3>
+          <p class="text-xs text-gray-400 mb-4">Install Deployra CLI on your target Linux VPS server.</p>
+          <div class="bg-gray-950 p-3 rounded-xl font-mono text-xs text-brand-400 border border-gray-800 select-all">$ npm i -g deployra</div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="glass-card p-6 rounded-2xl relative">
+          <div class="w-8 h-8 rounded-lg bg-accent-violet/20 text-accent-violet font-bold flex items-center justify-center text-sm mb-4">2</div>
+          <h3 class="text-lg font-bold text-white mb-2">Init Configuration</h3>
+          <p class="text-xs text-gray-400 mb-4">Generate starter config spec in your project directory.</p>
+          <div class="bg-gray-950 p-3 rounded-xl font-mono text-xs text-accent-violet border border-gray-800 select-all">$ deployra init</div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="glass-card p-6 rounded-2xl relative">
+          <div class="w-8 h-8 rounded-lg bg-accent-cyan/20 text-accent-cyan font-bold flex items-center justify-center text-sm mb-4">3</div>
+          <h3 class="text-lg font-bold text-white mb-2">Register Project</h3>
+          <p class="text-xs text-gray-400 mb-4">Register project config with Deployra SQLite registry.</p>
+          <div class="bg-gray-950 p-3 rounded-xl font-mono text-xs text-accent-cyan border border-gray-800 select-all">$ deployra add</div>
+        </div>
+
+        <!-- Step 4 -->
+        <div class="glass-card p-6 rounded-2xl relative">
+          <div class="w-8 h-8 rounded-lg bg-accent-emerald/20 text-accent-emerald font-bold flex items-center justify-center text-sm mb-4">4</div>
+          <h3 class="text-lg font-bold text-white mb-2">Start Daemon</h3>
+          <p class="text-xs text-gray-400 mb-4">Start long-running poller daemon (or test with <code class="text-accent-amber">--dry-run</code>).</p>
+          <div class="bg-gray-950 p-3 rounded-xl font-mono text-xs text-accent-emerald border border-gray-800 select-all">$ deployra watch</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Key Features Section -->
+  <section id="features" class="py-20 border-t border-gray-800/60 bg-gray-950/50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      
+      <div class="text-center max-w-3xl mx-auto mb-16">
+        <h2 class="text-xs font-bold uppercase tracking-widest text-brand-400 mb-3">Engine Highlights</h2>
+        <p class="text-3xl sm:text-4xl font-extrabold text-white">Built for Reliability, Speed & Simplicity</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        
+        <!-- Feature 1 -->
+        <div class="glass-card glass-card-hover p-8 rounded-2xl">
+          <div class="w-12 h-12 rounded-xl bg-brand-500/10 border border-brand-500/20 text-brand-400 flex items-center justify-center text-2xl mb-6">
+            🌐
+          </div>
+          <h3 class="text-xl font-bold text-white mb-3">100% Framework Agnostic</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">
+            Deploys Node.js, Go, Python, Rust, PHP, Java, Ruby, Docker binaries, or static sites without proprietary agent plugins or framework locks.
+          </p>
+        </div>
+
+        <!-- Feature 2 -->
+        <div class="glass-card glass-card-hover p-8 rounded-2xl">
+          <div class="w-12 h-12 rounded-xl bg-accent-violet/10 border border-accent-violet/20 text-accent-violet flex items-center justify-center text-2xl mb-6">
+            ⚡
+          </div>
+          <h3 class="text-xl font-bold text-white mb-3"><a href="https://github.com/litepacks/workmatic" target="_blank" rel="noopener noreferrer" class="hover:underline">Workmatic Queue Engine</a></h3>
+          <p class="text-gray-400 text-sm leading-relaxed">
+            Embedded SQLite job queue engine powered by <a href="https://github.com/litepacks/workmatic" target="_blank" rel="noopener noreferrer" class="text-accent-violet font-semibold hover:underline">Workmatic</a> handles background deployment queues, atomic concurrency locks, and configurable queue policies (<code class="text-brand-400">latest</code>, <code class="text-brand-400">fifo</code>, <code class="text-brand-400">reject</code>).
+          </p>
+        </div>
+
+        <!-- Feature 3 -->
+        <div class="glass-card glass-card-hover p-8 rounded-2xl">
+          <div class="w-12 h-12 rounded-xl bg-accent-cyan/10 border border-accent-cyan/20 text-accent-cyan flex items-center justify-center text-2xl mb-6">
+            🛠
+          </div>
+          <h3 class="text-xl font-bold text-white mb-3"><a href="https://github.com/litepacks/unitup" target="_blank" rel="noopener noreferrer" class="hover:underline">Systemd Lifecycle (Unitup)</a></h3>
+          <p class="text-gray-400 text-sm leading-relaxed">
+            Automates systemd service restart, reload, and auto-registration using <a href="https://github.com/litepacks/unitup" target="_blank" rel="noopener noreferrer" class="text-accent-cyan font-semibold hover:underline">Unitup</a> with configurable memory limits and CPU quotas.
+          </p>
+        </div>
+
+        <!-- Feature 4 -->
+        <div class="glass-card glass-card-hover p-8 rounded-2xl">
+          <div class="w-12 h-12 rounded-xl bg-accent-emerald/10 border border-accent-emerald/20 text-accent-emerald flex items-center justify-center text-2xl mb-6">
+            🩺
+          </div>
+          <h3 class="text-xl font-bold text-white mb-3"><a href="https://github.com/litepacks/ready-checker" target="_blank" rel="noopener noreferrer" class="hover:underline">Readiness Checkers</a></h3>
+          <p class="text-gray-400 text-sm leading-relaxed">
+            Post-deployment verification powered by <a href="https://github.com/litepacks/ready-checker" target="_blank" rel="noopener noreferrer" class="text-accent-emerald font-semibold hover:underline">Ready-checker</a> supporting HTTP/HTTPS endpoints, TCP ports, command execution, process verification, and file existence.
+          </p>
+        </div>
+
+        <!-- Feature 5 -->
+        <div class="glass-card glass-card-hover p-8 rounded-2xl">
+          <div class="w-12 h-12 rounded-xl bg-accent-rose/10 border border-accent-rose/20 text-accent-rose flex items-center justify-center text-2xl mb-6">
+            ⏪
+          </div>
+          <h3 class="text-xl font-bold text-white mb-3">Automated Rollbacks</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">
+            If build steps or readiness checks fail, Deployra automatically reverts the repository to the last successful commit SHA and restarts the service.
+          </p>
+        </div>
+
+        <!-- Feature 6 -->
+        <div class="glass-card glass-card-hover p-8 rounded-2xl border-accent-amber/30">
+          <div class="w-12 h-12 rounded-xl bg-accent-amber/10 border border-accent-amber/20 text-accent-amber flex items-center justify-center text-2xl mb-6">
+            ⚡
+          </div>
+          <h3 class="text-xl font-bold text-white mb-3">Dry-Run Simulation Mode</h3>
+          <p class="text-gray-400 text-sm leading-relaxed">
+            Pass <code class="text-accent-amber font-semibold">--dry-run</code> to test deployment pipelines, preview build commands and service actions safely without mutating system state.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Architecture Section -->
+  <section id="architecture" class="py-20 border-t border-gray-800/60">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center max-w-3xl mx-auto mb-16">
+        <h2 class="text-xs font-bold uppercase tracking-widest text-brand-400 mb-3">Internal Pipeline</h2>
+        <p class="text-3xl sm:text-4xl font-extrabold text-white">How Deployra Orchestrates Deployments</p>
+      </div>
+
+      <!-- Pipeline Steps Flow -->
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        
+        <div class="glass-card p-6 rounded-xl border-l-4 border-l-brand-500">
+          <span class="text-xs font-mono text-brand-400 font-bold">STEP 01</span>
+          <h4 class="text-lg font-bold text-white mt-1">Git Poller</h4>
+          <p class="text-xs text-gray-400 mt-2">Lightweight <code class="text-gray-300">git ls-remote</code> checks target branch SHA periodically.</p>
+        </div>
+
+        <div class="glass-card p-6 rounded-xl border-l-4 border-l-accent-violet">
+          <span class="text-xs font-mono text-accent-violet font-bold">STEP 02</span>
+          <h4 class="text-lg font-bold text-white mt-1">Workmatic Queue</h4>
+          <p class="text-xs text-gray-400 mt-2">Deduplicates SHAs and acquires atomic SQLite project lock.</p>
+        </div>
+
+        <div class="glass-card p-6 rounded-xl border-l-4 border-l-accent-cyan">
+          <span class="text-xs font-mono text-accent-cyan font-bold">STEP 03</span>
+          <h4 class="text-lg font-bold text-white mt-1">Build Pipeline</h4>
+          <p class="text-xs text-gray-400 mt-2">Executes configured <code class="text-gray-300">install</code> and <code class="text-gray-300">build</code> command sequences safely.</p>
+        </div>
+
+        <div class="glass-card p-6 rounded-xl border-l-4 border-l-accent-emerald">
+          <span class="text-xs font-mono text-accent-emerald font-bold">STEP 04</span>
+          <h4 class="text-lg font-bold text-white mt-1">Systemd & Health</h4>
+          <p class="text-xs text-gray-400 mt-2">Restarts systemd unit via Unitup and verifies post-deploy readiness.</p>
+        </div>
+
+        <div class="glass-card p-6 rounded-xl border-l-4 border-l-accent-rose">
+          <span class="text-xs font-mono text-accent-rose font-bold">RECOVERY</span>
+          <h4 class="text-lg font-bold text-white mt-1">Auto Rollback</h4>
+          <p class="text-xs text-gray-400 mt-2">On step failure, automatically reverts to previous valid commit SHA.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Configuration Sample Section -->
+  <section id="config" class="py-20 border-t border-gray-800/60 bg-gray-950/50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+        
+        <div class="lg:col-span-5">
+          <h2 class="text-xs font-bold uppercase tracking-widest text-brand-400 mb-3">Configuration File</h2>
+          <h3 class="text-3xl font-extrabold text-white mb-6">Simple, Declarative YAML Spec</h3>
+          <p class="text-gray-400 text-sm leading-relaxed mb-6">
+            Configure project sources, build command arrays, systemd service names, custom start scripts, readiness check endpoints, and rollback behavior in a single file: <code class="text-brand-400">deployra.config.yaml</code>.
+          </p>
+          <ul class="space-y-3 text-sm text-gray-300">
+            <li class="flex items-center gap-2">
+              <span class="text-accent-emerald">✔</span>
+              <span><strong>service.command</strong>: Run custom npm scripts like <code class="text-brand-400">npm run start:api</code></span>
+            </li>
+            <li class="flex items-center gap-2">
+              <span class="text-accent-emerald">✔</span>
+              <span><strong>queueMode</strong>: Control concurrent deployment queue (<code class="text-brand-400">latest</code>, <code class="text-brand-400">fifo</code>, <code class="text-brand-400">reject</code>)</span>
+            </li>
+            <li class="flex items-center gap-2">
+              <span class="text-accent-emerald">✔</span>
+              <span><strong>ready.url</strong>: Health check url verification before marking deployment successful</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="lg:col-span-7">
+          <div class="rounded-2xl glass-card border border-gray-800 overflow-hidden shadow-2xl">
+            <div class="bg-gray-900/90 px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+              <span class="text-xs font-mono text-gray-400">deployra.config.yaml</span>
+              <span class="text-xs font-mono text-brand-400">YAML</span>
+            </div>
+            <pre class="p-6 font-mono text-sm leading-relaxed text-gray-300 overflow-x-auto bg-gray-950/90"><code><span class="text-gray-500"># Deployra Configuration</span>
+<span class="text-brand-400">project</span>:
+  <span class="text-cyan-400">name</span>: api
+  <span class="text-cyan-400">path</span>: /var/www/api
+
+<span class="text-brand-400">source</span>:
+  <span class="text-cyan-400">remote</span>: origin
+  <span class="text-cyan-400">branch</span>: main
+
+<span class="text-brand-400">watch</span>:
+  <span class="text-cyan-400">interval</span>: 30s
+
+<span class="text-brand-400">deploy</span>:
+  <span class="text-cyan-400">concurrency</span>: 1
+  <span class="text-cyan-400">queueMode</span>: latest
+
+  <span class="text-brand-400">commands</span>:
+    <span class="text-cyan-400">install</span>:
+      - npm ci
+    <span class="text-cyan-400">build</span>:
+      - npm run build
+
+  <span class="text-brand-400">service</span>:
+    <span class="text-cyan-400">name</span>: api
+    <span class="text-cyan-400">action</span>: restart
+    <span class="text-cyan-400">command</span>: npm run start:api
+
+  <span class="text-brand-400">ready</span>:
+    <span class="text-cyan-400">url</span>: http://127.0.0.1:6767/api/health
+    <span class="text-cyan-400">timeout</span>: 45s
+
+  <span class="text-brand-400">rollback</span>:
+    <span class="text-cyan-400">enabled</span>: true</code></pre>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- CLI Reference Section -->
+  <section id="cli" class="py-20 border-t border-gray-800/60">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center max-w-3xl mx-auto mb-16">
+        <h2 class="text-xs font-bold uppercase tracking-widest text-brand-400 mb-3">CLI Commands</h2>
+        <p class="text-3xl sm:text-4xl font-extrabold text-white">Full Command Reference</p>
+      </div>
+
+      <div class="glass-card rounded-2xl overflow-hidden border border-gray-800 shadow-2xl">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-gray-300">
+            <thead class="bg-gray-900/80 text-xs uppercase tracking-wider text-gray-400 font-mono border-b border-gray-800">
+              <tr>
+                <th class="px-6 py-4">Command</th>
+                <th class="px-6 py-4">Option Flags</th>
+                <th class="px-6 py-4">Description</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800/60 font-mono text-xs">
+              <tr class="hover:bg-gray-800/40 transition-colors">
+                <td class="px-6 py-4 text-brand-400 font-bold">deployra init [path]</td>
+                <td class="px-6 py-4 text-gray-500">—</td>
+                <td class="px-6 py-4 text-gray-300 font-sans">Generates a sample <code class="text-brand-400">deployra.config.yaml</code> file.</td>
+              </tr>
+              <tr class="hover:bg-gray-800/40 transition-colors">
+                <td class="px-6 py-4 text-brand-400 font-bold">deployra add [configPath]</td>
+                <td class="px-6 py-4 text-gray-500">—</td>
+                <td class="px-6 py-4 text-gray-300 font-sans">Registers a new project configuration into Deployra SQLite repository.</td>
+              </tr>
+              <tr class="hover:bg-gray-800/40 transition-colors">
+                <td class="px-6 py-4 text-brand-400 font-bold">deployra watch [app]</td>
+                <td class="px-6 py-4 text-accent-amber font-semibold">-d, --dry-run</td>
+                <td class="px-6 py-4 text-gray-300 font-sans">Starts the background Git polling daemon (<code class="text-accent-amber">--dry-run</code> to simulate).</td>
+              </tr>
+              <tr class="hover:bg-gray-800/40 transition-colors">
+                <td class="px-6 py-4 text-brand-400 font-bold">deployra deploy [app]</td>
+                <td class="px-6 py-4 text-accent-amber font-semibold">-d, --dry-run</td>
+                <td class="px-6 py-4 text-gray-300 font-sans">Triggers a manual deployment pipeline (<code class="text-accent-amber">--dry-run</code> to preview commands).</td>
+              </tr>
+              <tr class="hover:bg-gray-800/40 transition-colors">
+                <td class="px-6 py-4 text-brand-400 font-bold">deployra check [app]</td>
+                <td class="px-6 py-4 text-gray-500">—</td>
+                <td class="px-6 py-4 text-gray-300 font-sans">Performs a one-shot remote SHA check without running builds.</td>
+              </tr>
+              <tr class="hover:bg-gray-800/40 transition-colors">
+                <td class="px-6 py-4 text-brand-400 font-bold">deployra doctor [config]</td>
+                <td class="px-6 py-4 text-gray-500">—</td>
+                <td class="px-6 py-4 text-gray-300 font-sans">Runs diagnostic checks on Git, permissions, and Systemd status.</td>
+              </tr>
+              <tr class="hover:bg-gray-800/40 transition-colors">
+                <td class="px-6 py-4 text-brand-400 font-bold">deployra service &lt;action&gt;</td>
+                <td class="px-6 py-4 text-gray-500">install | start | stop</td>
+                <td class="px-6 py-4 text-gray-300 font-sans">Manages Deployra watcher daemon as a systemd background service.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="py-12 border-t border-gray-800/80 bg-gray-950">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-6">
+      <div class="flex items-center space-x-3">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand-600 to-accent-violet flex items-center justify-center text-white text-base font-bold">
+          🚀
+        </div>
+        <span class="text-base font-bold text-white">Deployra</span>
+        <span class="text-xs text-gray-500">© 2026 litepacks</span>
+      </div>
+
+      <div class="text-xs text-gray-500">
+        Released under the MIT License • Built for high-reliability VPS automation.
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
