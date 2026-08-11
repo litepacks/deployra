@@ -1,11 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeAndValidateConfig } from '../src/config/schema.js';
+import { WorkmaticEngine } from '../src/jobs/workmatic-engine.js';
 import { DeploymentPipelineRunner } from '../src/pipeline/pipeline-runner.js';
 import { closeDatabase, resetDatabase } from '../src/storage/database.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
 import { ProjectRepository } from '../src/storage/project-repository.js';
 import { SourceWatcher } from '../src/watcher/source-watcher.js';
-import { WorkmaticEngine } from '../src/jobs/workmatic-engine.js';
 
 describe('Dry-Run Simulation Mode', () => {
   beforeEach(() => {

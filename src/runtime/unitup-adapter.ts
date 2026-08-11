@@ -22,9 +22,8 @@ export function parseCommandString(command: string): { command: string; args?: s
 
   const tokens: string[] = [];
   const regex = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(trimmed)) !== null) {
+  let match = regex.exec(trimmed);
+  while (match !== null) {
     if (match[1] !== undefined) {
       tokens.push(match[1]);
     } else if (match[2] !== undefined) {
@@ -32,6 +31,7 @@ export function parseCommandString(command: string): { command: string; args?: s
     } else {
       tokens.push(match[0]);
     }
+    match = regex.exec(trimmed);
   }
 
   if (tokens.length === 0) {

@@ -97,7 +97,7 @@ export function resolveProjectName(
   projectName?: string,
   cwd: string = process.cwd(),
 ): string | undefined {
-  if (projectName && projectName.trim()) {
+  if (projectName?.trim()) {
     return projectName.trim();
   }
 

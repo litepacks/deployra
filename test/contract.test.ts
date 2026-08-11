@@ -431,7 +431,7 @@ describe('Contract Tests', () => {
 
       const captured: (string | undefined)[] = [];
       const originalStart = DeployraDaemon.prototype.start;
-      DeployraDaemon.prototype.start = async function (targetProjectName?: string) {
+      DeployraDaemon.prototype.start = async (targetProjectName?: string) => {
         captured.push(targetProjectName);
       };
 

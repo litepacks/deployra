@@ -7,7 +7,7 @@ import { safeExec } from '../src/security/exec.js';
 import { closeDatabase } from '../src/storage/database.js';
 import { DeploymentRepository } from '../src/storage/deployment-repository.js';
 import { BROKEN_SERVER_CODE_SNIPPET } from './fixtures/broken-server.js';
-import { createSampleServer, startSampleServer } from './fixtures/sample-server.js';
+import { startSampleServer } from './fixtures/sample-server.js';
 
 function getCLICommand(): { command: string; argsPrefix: string[] } {
   const distCli = path.resolve('./dist/cli/index.js');
