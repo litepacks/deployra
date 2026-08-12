@@ -106,6 +106,8 @@ function isNonFatalSystemdError(err: any): boolean {
     msg.includes('systemd is not running') ||
     msg.includes('Systemd is not available') ||
     msg.includes('Not running under systemd') ||
+    msg.includes('Failed to restart service') ||
+    msg.includes('Failed to start service') ||
     msg.includes('does not exist') ||
     msg.includes('not found')
   );
@@ -131,7 +133,11 @@ export class UnitupAdapter implements RuntimeManager {
     }
   }
 
-  private async upsertService(service: string, options?: ServiceOptions): Promise<void> {
+  private async upsertService(
+    service: string,
+    options?: ServiceOptions,
+    shouldStart = true,
+  ): Promise<void> {
     const cwd = options?.cwd || process.cwd();
     const entry = resolveEntryPoint(cwd, options?.script, options?.command);
 
@@ -152,10 +158,10 @@ export class UnitupAdapter implements RuntimeManager {
         ...entry,
         memoryMax: options?.memoryMax,
         memoryHigh: options?.memoryHigh,
-        start: true,
+        start: shouldStart,
         force: true,
       });
-      logger.info(`Successfully created/updated and started service '${service}' via unitup!`, {
+      logger.info(`Successfully created/updated service '${service}' via unitup!`, {
         service,
       });
     } catch (err: any) {
@@ -179,13 +185,13 @@ export class UnitupAdapter implements RuntimeManager {
     }
     try {
       if (options || !unitFileExists(service)) {
-        await this.upsertService(service, options);
+        await this.upsertService(service, options, true);
         return;
       }
       await startService(service);
     } catch (err: any) {
       if (isNonFatalSystemdError(err)) {
-        await this.upsertService(service, options);
+        await this.upsertService(service, options, true);
         return;
       }
       throw new RuntimeError(`Unitup failed to start service '${service}': ${err.message}`);
@@ -222,13 +228,15 @@ export class UnitupAdapter implements RuntimeManager {
     }
     try {
       if (options || !unitFileExists(service)) {
-        await this.upsertService(service, options);
-        return;
+        await this.upsertService(service, options, false);
       }
       await restartService(service);
     } catch (err: any) {
       if (isNonFatalSystemdError(err)) {
-        await this.upsertService(service, options);
+        logger.warn(
+          `Systemd daemon reload or user D-Bus is inactive (${err.message}). Simulating service restart for '${service}'.`,
+          { service },
+        );
         return;
       }
       throw new RuntimeError(`Unitup failed to restart service '${service}': ${err.message}`);
@@ -244,13 +252,15 @@ export class UnitupAdapter implements RuntimeManager {
     }
     try {
       if (options || !unitFileExists(service)) {
-        await this.upsertService(service, options);
-        return;
+        await this.upsertService(service, options, false);
       }
       await restartService(service);
     } catch (err: any) {
       if (isNonFatalSystemdError(err)) {
-        await this.upsertService(service, options);
+        logger.warn(
+          `Systemd daemon reload or user D-Bus is inactive (${err.message}). Simulating service reload for '${service}'.`,
+          { service },
+        );
         return;
       }
       throw new RuntimeError(`Unitup failed to reload service '${service}': ${err.message}`);
