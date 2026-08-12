@@ -119,7 +119,16 @@ export const deployraConfigSchema = z.object({
 });
 
 export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeployraConfig {
-  const result = deployraConfigSchema.safeParse(rawConfig);
+  let normalizedInput = rawConfig;
+  if (rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)) {
+    const rawObj = { ...(rawConfig as Record<string, any>) };
+    if (rawObj.service && !rawObj.deploy?.service) {
+      rawObj.deploy = { ...(rawObj.deploy || {}), service: rawObj.service };
+    }
+    normalizedInput = rawObj;
+  }
+
+  const result = deployraConfigSchema.safeParse(normalizedInput);
   if (!result.success) {
     const issues = result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ');
     throw new ConfigValidationError(`Invalid configuration: ${issues}`);
@@ -195,6 +204,8 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
       service: {
         name: serviceName,
         action: serviceAction,
+        script: data.deploy.service?.script,
+        command: data.deploy.service?.command,
         memoryMax: data.deploy.service?.memoryMax,
         memoryHigh: data.deploy.service?.memoryHigh,
         cpuQuota: data.deploy.service?.cpuQuota,

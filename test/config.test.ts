@@ -45,6 +45,25 @@ describe('Config Schema Validation', () => {
     expect(normalized.deploy.service.action).toBe('restart');
   });
 
+  it('normalizes root-level service configuration into deploy.service properly', () => {
+    const raw = {
+      project: {
+        name: 'express-api',
+        path: '/var/www/express-api',
+      },
+      service: {
+        name: 'express-api',
+        action: 'restart',
+        command: 'npm run start:api',
+      },
+    };
+
+    const normalized = normalizeAndValidateConfig(raw);
+    expect(normalized.deploy.service.name).toBe('express-api');
+    expect(normalized.deploy.service.action).toBe('restart');
+    expect(normalized.deploy.service.command).toBe('npm run start:api');
+  });
+
   it('preserves all custom command steps and multiple commands per step array', () => {
     const normalized = normalizeAndValidateConfig({
       project: { name: 'app-custom-steps', path: '/app' },
