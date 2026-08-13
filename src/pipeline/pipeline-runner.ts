@@ -47,7 +47,16 @@ export class DeploymentPipelineRunner {
     try {
       // Step 1: acquire-lock
       await this.runStep(deploymentId, 'acquire-lock', async () => {
-        lockAcquired = this.stateRepo.acquireLock(projectName, deploymentId);
+        const maxWaitMs = 3000;
+        const pollIntervalMs = 100;
+        const startWait = Date.now();
+
+        while (Date.now() - startWait <= maxWaitMs) {
+          lockAcquired = this.stateRepo.acquireLock(projectName, deploymentId);
+          if (lockAcquired) break;
+          await new Promise((res) => setTimeout(res, pollIntervalMs));
+        }
+
         if (!lockAcquired) {
           throw new DeployraError(`Could not acquire deployment lock for project '${projectName}'`);
         }

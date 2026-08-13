@@ -38,6 +38,27 @@ export interface DeploymentRecord {
   error?: string;
 }
 
+export function computeDeploymentSteps(configCommands?: Record<string, string[]>): string[] {
+  const basePreSteps = [
+    'acquire-lock',
+    'validate-repository',
+    'fetch',
+    'resolve-target',
+    'prepare',
+  ];
+  const basePostSteps = ['service-action', 'ready-check', 'complete', 'release-lock'];
+
+  if (!configCommands) {
+    return [...basePreSteps, 'install', 'build', ...basePostSteps];
+  }
+
+  const activeCommandSteps = Object.entries(configCommands)
+    .filter(([_, cmdList]) => Array.isArray(cmdList) && cmdList.length > 0)
+    .map(([stepName]) => stepName);
+
+  return [...basePreSteps, ...activeCommandSteps, ...basePostSteps];
+}
+
 export class DeploymentRepository {
   public createDeployment(data: {
     id: string;
@@ -67,19 +88,7 @@ export class DeploymentRepository {
       createdAt,
     );
 
-    const defaultSteps = data.steps || [
-      'acquire-lock',
-      'validate-repository',
-      'fetch',
-      'resolve-target',
-      'prepare',
-      'install',
-      'build',
-      'service-action',
-      'ready-check',
-      'complete',
-      'release-lock',
-    ];
+    const defaultSteps = data.steps || computeDeploymentSteps();
 
     const insertStep = db.prepare(`
       INSERT INTO deployment_steps (id, deployment_id, step_name, status)

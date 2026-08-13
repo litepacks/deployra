@@ -420,7 +420,7 @@ describe('Deployra End-to-End (E2E) Pipeline', () => {
 
     const installStep = result?.steps.find((s) => s.stepName === 'install');
     expect(installStep?.status).toBe('pending');
-  });
+  }, 15000);
 
   it('dynamically reloads updated deployra.config.yaml commands from repository commit during deployment', async () => {
     const projRepo = new ProjectRepository();

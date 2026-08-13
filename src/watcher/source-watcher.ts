@@ -4,7 +4,7 @@ import { isUrlLike } from '../config/schema.js';
 import { GitClient } from '../git/git-client.js';
 import type { WorkmaticEngine } from '../jobs/workmatic-engine.js';
 import { logger } from '../logging/logger.js';
-import { DeploymentRepository } from '../storage/deployment-repository.js';
+import { computeDeploymentSteps, DeploymentRepository } from '../storage/deployment-repository.js';
 import { ProjectRepository, type StoredProject } from '../storage/project-repository.js';
 
 export class SourceWatcher {
@@ -205,6 +205,8 @@ export class SourceWatcher {
 
       // Create deployment record
       const deploymentId = `dep_${nanoid(10)}`;
+      const dynamicSteps = computeDeploymentSteps(proj.config.deploy.commands);
+
       this.deploymentRepo.createDeployment({
         id: deploymentId,
         projectName: proj.name,
@@ -213,6 +215,7 @@ export class SourceWatcher {
         status: 'queued',
         triggerType,
         dryRun,
+        steps: dynamicSteps,
       });
 
       // Enqueue job via Workmatic

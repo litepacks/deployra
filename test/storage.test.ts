@@ -1,7 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeAndValidateConfig } from '../src/config/schema.js';
 import { closeDatabase, resetDatabase } from '../src/storage/database.js';
-import { DeploymentRepository } from '../src/storage/deployment-repository.js';
+import {
+  computeDeploymentSteps,
+  DeploymentRepository,
+} from '../src/storage/deployment-repository.js';
 import { ProjectRepository } from '../src/storage/project-repository.js';
 import { StateRepository } from '../src/storage/state-repository.js';
 
@@ -119,5 +122,71 @@ describe('Storage & Repository Tests', () => {
     expect(stats.total).toBe(1);
     expect(stats.success).toBe(1);
     expect(stats.failed).toBe(0);
+  });
+
+  it('computes dynamic deployment steps according to commands configuration', () => {
+    const customSteps = computeDeploymentSteps({
+      install: ['npm ci'],
+      migrate: ['npm run db:migrate'],
+      build: ['npm run build:css'],
+    });
+
+    expect(customSteps).toEqual([
+      'acquire-lock',
+      'validate-repository',
+      'fetch',
+      'resolve-target',
+      'prepare',
+      'install',
+      'migrate',
+      'build',
+      'service-action',
+      'ready-check',
+      'complete',
+      'release-lock',
+    ]);
+
+    const buildOnlySteps = computeDeploymentSteps({
+      build: ['npm run build'],
+    });
+
+    expect(buildOnlySteps).toEqual([
+      'acquire-lock',
+      'validate-repository',
+      'fetch',
+      'resolve-target',
+      'prepare',
+      'build',
+      'service-action',
+      'ready-check',
+      'complete',
+      'release-lock',
+    ]);
+  });
+
+  it('automatically clears stale locks when previous deployment is completed or failed', () => {
+    const stateRepo = new StateRepository();
+    const projRepo = new ProjectRepository();
+    const depRepo = new DeploymentRepository();
+
+    projRepo.saveProject(
+      normalizeAndValidateConfig({
+        project: { name: 'stale-lock-app', path: '/tmp/stale-lock-app' },
+      }),
+    );
+
+    depRepo.createDeployment({
+      id: 'dep_finished_1',
+      projectName: 'stale-lock-app',
+      targetSha: 'sha_1',
+      triggerType: 'manual',
+    });
+
+    stateRepo.acquireLock('stale-lock-app', 'dep_finished_1');
+    depRepo.updateStatus('dep_finished_1', 'success');
+
+    // Acquire lock for new deployment while previous lock held by finished deployment
+    const lockAcquired = stateRepo.acquireLock('stale-lock-app', 'dep_new_2');
+    expect(lockAcquired).toBe(true);
   });
 });
