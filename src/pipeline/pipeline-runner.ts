@@ -8,7 +8,7 @@ import { GitClient } from '../git/git-client.js';
 import type { DeploymentJobPayload } from '../jobs/workmatic-engine.js';
 import { logger } from '../logging/logger.js';
 import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
-import { UnitupAdapter } from '../runtime/unitup-adapter.js';
+import { parseCommandString, UnitupAdapter } from '../runtime/unitup-adapter.js';
 import { safeExec } from '../security/exec.js';
 import { DeploymentRepository } from '../storage/deployment-repository.js';
 import { ProjectRepository } from '../storage/project-repository.js';
@@ -416,15 +416,22 @@ export class DeploymentPipelineRunner {
       logger.info(`[DRY-RUN] Would execute command: '${cmdStr}' in working directory '${cwd}'`);
       return;
     }
-    const parts = cmdStr.split(' ');
-    const cmd = parts[0];
-    const args = parts.slice(1);
+    const parsed = parseCommandString(cmdStr);
+    const cmd = parsed.command;
+    const args = parsed.args || [];
     const maxAttempts = retryConfig.attempts + 1;
 
     let lastErr: Error | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await safeExec(cmd, args, { cwd, timeoutMs });
+        await safeExec(cmd, args, {
+          cwd,
+          timeoutMs,
+          env: {
+            CI: 'true',
+            FORCE_COLOR: '0',
+          },
+        });
         return;
       } catch (err: any) {
         lastErr = err;

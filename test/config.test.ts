@@ -3,6 +3,25 @@ import { formatDurationMs, parseDurationMs } from '../src/config/duration.js';
 import { normalizeAndValidateConfig, sanitizeProjectName } from '../src/config/schema.js';
 import { ConfigValidationError } from '../src/errors/deployra-error.js';
 
+import { parseCommandString } from '../src/runtime/unitup-adapter.js';
+
+describe('Command String Parsing', () => {
+  it('parses commands with trailing or multiple spaces without empty string args', () => {
+    expect(parseCommandString('npm i ')).toEqual({ command: 'npm', args: ['i'] });
+    expect(parseCommandString('  npm   install   --no-audit  ')).toEqual({
+      command: 'npm',
+      args: ['install', '--no-audit'],
+    });
+  });
+
+  it('wraps commands containing shell operators in sh -c', () => {
+    expect(parseCommandString('rm -rf node_modules && npm i')).toEqual({
+      command: 'sh',
+      args: ['-c', 'rm -rf node_modules && npm i'],
+    });
+  });
+});
+
 describe('Project Name Sanitization', () => {
   it('sanitizes URL-like project names, trailing slashes, and git extensions', () => {
     expect(sanitizeProjectName('https://github.com/user/my-repo.git')).toBe('my-repo');

@@ -17,6 +17,15 @@ describe('Security & Masker Tests', () => {
     expect(masked).toBe('[REDACTED PRIVATE KEY]');
   });
 
+  it('preserves valid file paths, project names, and git URLs without replacing them with <URL>', () => {
+    const log = 'Command npm ci failed in /var/www/my-store-app for git@github.com:org/repo.git';
+    const masked = maskSecrets(log);
+    expect(masked).toContain('/var/www/my-store-app');
+    expect(masked).toContain('git@github.com:org/repo.git');
+    expect(masked).not.toContain('<URL>');
+    expect(masked).not.toContain('<URL1>');
+  });
+
   it('redacts secret properties from structured objects using @visulima/redact', () => {
     const data = {
       user: 'admin',

@@ -38,8 +38,8 @@ export async function safeExec(
 
     const child = spawn(file, args, spawnOptions);
 
-    let stdout = '';
-    let stderr = '';
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let killedByTimeout = false;
@@ -77,14 +77,14 @@ export async function safeExec(
     child.stdout?.on('data', (chunk: Buffer) => {
       stdoutBytes += chunk.length;
       if (stdoutBytes <= maxBuffer) {
-        stdout += chunk.toString('utf-8');
+        stdoutChunks.push(chunk);
       }
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
       stderrBytes += chunk.length;
       if (stderrBytes <= maxBuffer) {
-        stderr += chunk.toString('utf-8');
+        stderrChunks.push(chunk);
       }
     });
 
@@ -97,6 +97,9 @@ export async function safeExec(
     child.on('close', (code) => {
       if (timer) clearTimeout(timer);
       if (escalationTimer) clearTimeout(escalationTimer);
+
+      const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
+      const stderr = Buffer.concat(stderrChunks).toString('utf-8');
 
       const durationMs = Date.now() - startTime;
       const exitCode = code ?? (killedByTimeout ? 124 : 1);

@@ -20,6 +20,10 @@ export function parseCommandString(command: string): { command: string; args?: s
     return { command: '' };
   }
 
+  if (/[&|;<>]/.test(trimmed)) {
+    return { command: 'sh', args: ['-c', trimmed] };
+  }
+
   const tokens: string[] = [];
   const regex = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
   let match = regex.exec(trimmed);
