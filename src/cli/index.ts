@@ -130,8 +130,8 @@ program
   .description('View deployment logs')
   .option('-f, --follow', 'Follow log stream')
   .option('-d, --deployment <id>', 'Deployment ID')
-  .action((projectName, options) => {
-    logsCommand(projectName, options);
+  .action(async (projectName, options) => {
+    await logsCommand(projectName, options);
   });
 
 program

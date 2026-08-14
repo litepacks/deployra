@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { formatDurationMs, parseDurationMs } from '../src/config/duration.js';
-import { normalizeAndValidateConfig } from '../src/config/schema.js';
+import { normalizeAndValidateConfig, sanitizeProjectName } from '../src/config/schema.js';
 import { ConfigValidationError } from '../src/errors/deployra-error.js';
+
+describe('Project Name Sanitization', () => {
+  it('sanitizes URL-like project names, trailing slashes, and git extensions', () => {
+    expect(sanitizeProjectName('https://github.com/user/my-repo.git')).toBe('my-repo');
+    expect(sanitizeProjectName('https://github.com/user/my-repo.git/')).toBe('my-repo');
+    expect(sanitizeProjectName('git@github.com:user/my-repo.git')).toBe('my-repo');
+    expect(sanitizeProjectName('git@github.com:user/my-repo/')).toBe('my-repo');
+    expect(sanitizeProjectName('http://127.0.0.1:3000/app')).toBe('app');
+    expect(sanitizeProjectName('store-app.com')).toBe('store-app.com');
+  });
+});
 
 describe('Config Duration Utility', () => {
   it('parses various human-readable durations accurately', () => {
@@ -124,7 +135,7 @@ describe('Config Schema Validation', () => {
     expect(isUrlLike('my-repo.git')).toBe(true);
 
     expect(isUrlLike('my-clean-app')).toBe(false);
-    expect(isUrlLike('cinilicraft-shop')).toBe(false);
+    expect(isUrlLike('store-app')).toBe(false);
   });
 });
 

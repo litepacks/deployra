@@ -46,6 +46,22 @@ describe('Storage & Repository Tests', () => {
     expect(updated?.configHash).not.toBe(fetched?.configHash);
   });
 
+  it('automatically cleans up legacy URL-like project entries from database', () => {
+    const projRepo = new ProjectRepository();
+    const config = normalizeAndValidateConfig({
+      project: {
+        name: 'https://github.com/user/legacy-url-repo.git',
+        path: '/tmp/legacy-url-repo',
+      },
+    });
+    projRepo.saveProject(config);
+
+    const all = projRepo.getAllProjects();
+    expect(all.some((p) => p.name.startsWith('http'))).toBe(false);
+    expect(all.length).toBe(1);
+    expect(all[0].name).toBe('legacy-url-repo');
+  });
+
   it('manages project deployment locks cleanly', () => {
     const stateRepo = new StateRepository();
 

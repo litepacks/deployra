@@ -1,13 +1,15 @@
+import { sanitizeProjectName } from '../config/schema.js';
 import { getDatabase } from './database.js';
 
 export class StateRepository {
-  public acquireLock(projectName: string, lockedBy: string, timeoutMs = 900000): boolean {
+  public acquireLock(rawProjectName: string, lockedBy: string, timeoutMs = 900000): boolean {
+    const projectName = sanitizeProjectName(rawProjectName);
     const db = getDatabase();
     const now = Date.now();
 
     const existing = db
-      .prepare(`SELECT * FROM project_locks WHERE project_name = ?`)
-      .get(projectName) as any;
+      .prepare(`SELECT * FROM project_locks WHERE project_name = ? OR project_name = ?`)
+      .get(projectName, rawProjectName) as any;
 
     if (existing) {
       if (existing.locked_by === lockedBy) {
@@ -24,7 +26,10 @@ export class StateRepository {
         !lockHolderDep || ['queued', 'running', 'rolling_back'].includes(lockHolderDep.status);
 
       if (lockAge > timeoutMs || !isHolderActive) {
-        db.prepare(`DELETE FROM project_locks WHERE project_name = ?`).run(projectName);
+        db.prepare(`DELETE FROM project_locks WHERE project_name = ? OR project_name = ?`).run(
+          projectName,
+          rawProjectName,
+        );
       } else {
         return false;
       }
@@ -41,29 +46,38 @@ export class StateRepository {
     }
   }
 
-  public releaseLock(projectName: string, lockedBy?: string): boolean {
+  public releaseLock(rawProjectName: string, lockedBy?: string): boolean {
+    const projectName = sanitizeProjectName(rawProjectName);
     const db = getDatabase();
     if (lockedBy) {
       const res = db
-        .prepare(`DELETE FROM project_locks WHERE project_name = ? AND locked_by = ?`)
-        .run(projectName, lockedBy);
+        .prepare(
+          `DELETE FROM project_locks WHERE (project_name = ? OR project_name = ?) AND locked_by = ?`,
+        )
+        .run(projectName, rawProjectName, lockedBy);
       return res.changes > 0;
     }
-    const res = db.prepare(`DELETE FROM project_locks WHERE project_name = ?`).run(projectName);
+    const res = db
+      .prepare(`DELETE FROM project_locks WHERE project_name = ? OR project_name = ?`)
+      .run(projectName, rawProjectName);
     return res.changes > 0;
   }
 
-  public isLocked(projectName: string): boolean {
+  public isLocked(rawProjectName: string): boolean {
+    const projectName = sanitizeProjectName(rawProjectName);
     const db = getDatabase();
-    const row = db.prepare(`SELECT * FROM project_locks WHERE project_name = ?`).get(projectName);
+    const row = db
+      .prepare(`SELECT * FROM project_locks WHERE project_name = ? OR project_name = ?`)
+      .get(projectName, rawProjectName);
     return !!row;
   }
 
-  public getLockInfo(projectName: string): { lockedBy: string; lockedAt: number } | null {
+  public getLockInfo(rawProjectName: string): { lockedBy: string; lockedAt: number } | null {
+    const projectName = sanitizeProjectName(rawProjectName);
     const db = getDatabase();
     const row = db
-      .prepare(`SELECT * FROM project_locks WHERE project_name = ?`)
-      .get(projectName) as any;
+      .prepare(`SELECT * FROM project_locks WHERE project_name = ? OR project_name = ?`)
+      .get(projectName, rawProjectName) as any;
     if (!row) return null;
     return {
       lockedBy: row.locked_by,

@@ -16,7 +16,7 @@ export async function addCommand(configPath?: string): Promise<void> {
     if (isUrlLike(saved.name)) {
       console.log(
         chalk.yellow(
-          `⚠ Warning: Project name '${saved.name}' looks like a Git URL. It's recommended to use a clean project name (e.g. 'cinilicraft-shop') for project.name in deployra.config.yaml.`,
+          `⚠ Warning: Project name '${saved.name}' looks like a Git URL. It's recommended to use a clean project name (e.g. 'my-app') for project.name in deployra.config.yaml.`,
         ),
       );
     }
@@ -28,28 +28,28 @@ export async function addCommand(configPath?: string): Promise<void> {
     );
 
     const daemonActive = await isDaemonRunning();
-    if (!daemonActive) {
+    if (daemonActive) {
       console.log(
-        chalk.yellow(
-          `⚠ Warning: Deployra daemon ('deployra-daemon') is not running. Background monitoring/deployments will not process automatically until started.`,
+        chalk.green(
+          `✔ Background daemon is active and will process initial deployment for '${saved.name}' automatically.`,
         ),
       );
-    }
-
-    // Automatically trigger initial check & queue deployment
-    const workmatic = new WorkmaticEngine();
-    const watcher = new SourceWatcher(workmatic);
-    const depId = await watcher.checkProject(saved.name, 'manual');
-
-    if (depId) {
-      console.log(chalk.green(`✔ Queued initial deployment #${depId} for '${saved.name}'.`));
     } else {
-      console.log(chalk.blue(`ℹ Project '${saved.name}' is up to date at target remote commit.`));
-    }
+      console.log(
+        chalk.yellow(
+          `⚠ Warning: Deployra daemon is not running. Triggering initial deployment manually...`,
+        ),
+      );
+      const workmatic = new WorkmaticEngine();
+      const watcher = new SourceWatcher(workmatic);
+      const depId = await watcher.checkProject(saved.name, 'manual');
 
-    console.log(
-      chalk.gray(`ℹ Background monitoring active for '${saved.name}'. (Daemon: deployra watch)`),
-    );
+      if (depId) {
+        console.log(chalk.green(`✔ Queued initial deployment #${depId} for '${saved.name}'.`));
+      } else {
+        console.log(chalk.blue(`ℹ Project '${saved.name}' is up to date at target remote commit.`));
+      }
+    }
   } catch (err: any) {
     console.error(chalk.red(`✖ Failed to add project: ${err.message}`));
     process.exit(1);

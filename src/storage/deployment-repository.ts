@@ -299,4 +299,16 @@ export class DeploymentRepository {
       avgDurationMs: completedCount > 0 ? Math.round(totalDurationMs / completedCount) : 0,
     };
   }
+
+  cleanupStaleJobs(maxAgeMs = 15 * 60 * 1000): number {
+    const db = getDatabase();
+    const cutoff = Date.now() - maxAgeMs;
+    const stmt = db.prepare(`
+      UPDATE deployments 
+      SET status = 'failed', completed_at = ?, error = 'Deployment timed out or process was restarted unexpectedly' 
+      WHERE status IN ('running', 'rolling_back') AND (started_at < ? OR (started_at IS NULL AND created_at < ?))
+    `);
+    const result = stmt.run(Date.now(), cutoff, cutoff);
+    return result.changes;
+  }
 }

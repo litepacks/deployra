@@ -1,4 +1,5 @@
 import { computeConfigHash } from '../config/parser.js';
+import { isUrlLike, sanitizeProjectName } from '../config/schema.js';
 import type { NormalizedDeployraConfig } from '../config/types.js';
 import { getDatabase } from './database.js';
 
@@ -16,7 +17,22 @@ export interface StoredProject {
 }
 
 export class ProjectRepository {
+  public cleanupLegacyUrlProjects(): void {
+    try {
+      const db = getDatabase();
+      const rows = db.prepare(`SELECT name FROM projects`).all() as any[];
+      for (const row of rows) {
+        if (isUrlLike(row.name) || /[/:\\]/.test(row.name)) {
+          db.prepare(`DELETE FROM projects WHERE name = ?`).run(row.name);
+        }
+      }
+    } catch {
+      // Ignore database errors during cleanup
+    }
+  }
+
   public saveProject(config: NormalizedDeployraConfig): StoredProject {
+    this.cleanupLegacyUrlProjects();
     const db = getDatabase();
     const now = Date.now();
 
@@ -64,7 +80,11 @@ export class ProjectRepository {
 
   public getProject(name: string): StoredProject | null {
     const db = getDatabase();
-    const row = db.prepare(`SELECT * FROM projects WHERE name = ?`).get(name) as any;
+    const sanitized = sanitizeProjectName(name);
+    let row = db.prepare(`SELECT * FROM projects WHERE name = ?`).get(sanitized) as any;
+    if (!row) {
+      row = db.prepare(`SELECT * FROM projects WHERE name = ?`).get(name) as any;
+    }
     if (!row) return null;
 
     const parsedConfig = JSON.parse(row.config_json) as NormalizedDeployraConfig;
@@ -89,6 +109,7 @@ export class ProjectRepository {
   }
 
   public getAllProjects(): StoredProject[] {
+    this.cleanupLegacyUrlProjects();
     const db = getDatabase();
     const rows = db.prepare(`SELECT * FROM projects ORDER BY name ASC`).all() as any[];
     return rows.map((row) => {
@@ -115,24 +136,28 @@ export class ProjectRepository {
   }
 
   public deleteProject(name: string): boolean {
+    this.cleanupLegacyUrlProjects();
     const db = getDatabase();
-    const result = db.prepare(`DELETE FROM projects WHERE name = ?`).run(name);
+    const sanitized = sanitizeProjectName(name);
+    const result = db
+      .prepare(`DELETE FROM projects WHERE name = ? OR name = ?`)
+      .run(name, sanitized);
     return result.changes > 0;
   }
 
   public updateLastSeenSha(name: string, sha: string): void {
     const db = getDatabase();
-    db.prepare(`UPDATE projects SET last_seen_sha = ?, updated_at = ? WHERE name = ?`).run(
-      sha,
-      Date.now(),
-      name,
-    );
+    const sanitized = sanitizeProjectName(name);
+    db.prepare(
+      `UPDATE projects SET last_seen_sha = ?, updated_at = ? WHERE name = ? OR name = ?`,
+    ).run(sha, Date.now(), name, sanitized);
   }
 
   public updateLastSuccessfulSha(name: string, sha: string): void {
     const db = getDatabase();
+    const sanitized = sanitizeProjectName(name);
     db.prepare(
-      `UPDATE projects SET last_successful_sha = ?, last_seen_sha = ?, updated_at = ? WHERE name = ?`,
-    ).run(sha, sha, Date.now(), name);
+      `UPDATE projects SET last_successful_sha = ?, last_seen_sha = ?, updated_at = ? WHERE name = ? OR name = ?`,
+    ).run(sha, sha, Date.now(), name, sanitized);
   }
 }

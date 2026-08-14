@@ -56,6 +56,11 @@ export class WorkmaticEngine {
   public async startWorker(): Promise<void> {
     if (this.worker) return;
 
+    const cleaned = this.deploymentRepo.cleanupStaleJobs();
+    if (cleaned > 0) {
+      logger.info(`Cleaned up ${cleaned} stale deployment job(s) from previous process run.`);
+    }
+
     this.worker = createWorker({
       db: this.db,
       queue: 'deployra.deploy',

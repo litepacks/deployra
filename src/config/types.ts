@@ -72,6 +72,7 @@ export interface DeployCommandsConfig {
 export interface DeployServiceConfig {
   name: string;
   action?: ServiceAction; // Default 'restart'
+  stopBeforeBuild?: boolean;
   script?: string;
   command?: string;
   memoryMax?: string; // e.g. '512M', '1G'
@@ -145,6 +146,7 @@ export interface NormalizedDeployraConfig {
     service: {
       name: string;
       action: ServiceAction;
+      stopBeforeBuild: boolean;
       script?: string;
       command?: string;
       memoryMax?: string;

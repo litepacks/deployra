@@ -1,4 +1,5 @@
 import { type SpawnOptions, spawn } from 'node:child_process';
+import fs from 'node:fs';
 import { CommandExecutionError } from '../errors/deployra-error.js';
 
 export interface ExecOptions {
@@ -20,6 +21,10 @@ export async function safeExec(
   args: string[] = [],
   options: ExecOptions = {},
 ): Promise<ExecResult> {
+  if (options.cwd && !fs.existsSync(options.cwd)) {
+    throw new CommandExecutionError(`Working directory does not exist: '${options.cwd}'`);
+  }
+
   const startTime = Date.now();
   const timeoutMs = options.timeoutMs ?? 600000; // default 10 minutes
   const maxBuffer = options.maxBufferBytes ?? 10 * 1024 * 1024; // default 10MB
@@ -108,9 +113,14 @@ export async function safeExec(
       }
 
       if (exitCode !== 0) {
+        const rawOutput = (stderr || stdout).trim();
+        const outputSnippet = rawOutput
+          ? `\n   Output:\n   ${rawOutput.slice(-1000).replace(/\n/g, '\n   ')}`
+          : '';
+        const cmdString = `${file}${args.length > 0 ? ` ${args.join(' ')}` : ''}`;
         reject(
           new CommandExecutionError(
-            `Command '${file} ${args.join(' ')}' failed with exit code ${exitCode}`,
+            `Command '${cmdString}' failed with exit code ${exitCode}${outputSnippet}`,
             exitCode,
             stderr || stdout,
           ),

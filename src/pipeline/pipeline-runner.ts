@@ -128,6 +128,15 @@ export class DeploymentPipelineRunner {
         }
       });
 
+      if (config.deploy.service.stopBeforeBuild && !isDryRun) {
+        logger.info(`Stopping service '${config.deploy.service.name}' before build steps...`);
+        try {
+          await this.unitupAdapter.stop(config.deploy.service.name);
+        } catch {
+          // Ignore if service was not running
+        }
+      }
+
       // Step 6+: Execute dynamic command steps (install, build, etc.)
       await this.executeBuildCommands(
         deploymentId,
@@ -264,7 +273,13 @@ export class DeploymentPipelineRunner {
       if (Array.isArray(cmdList) && cmdList.length > 0) {
         await this.runStep(deploymentId, stepName, async () => {
           for (const cmdStr of cmdList) {
-            await this.executeCommandWithRetry(cmdStr, workingDir, config.deploy.retry, isDryRun);
+            await this.executeCommandWithRetry(
+              cmdStr,
+              workingDir,
+              config.deploy.retry,
+              isDryRun,
+              config.deploy.timeoutMs,
+            );
           }
 
           if (stepName === 'build' && isIsolated) {
@@ -395,6 +410,7 @@ export class DeploymentPipelineRunner {
     cwd: string,
     retryConfig: { attempts: number; backoffMs: number },
     isDryRun = false,
+    timeoutMs?: number,
   ): Promise<void> {
     if (isDryRun) {
       logger.info(`[DRY-RUN] Would execute command: '${cmdStr}' in working directory '${cwd}'`);
@@ -408,7 +424,7 @@ export class DeploymentPipelineRunner {
     let lastErr: Error | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await safeExec(cmd, args, { cwd });
+        await safeExec(cmd, args, { cwd, timeoutMs });
         return;
       } catch (err: any) {
         lastErr = err;

@@ -6,7 +6,39 @@ import type { NormalizedDeployraConfig } from './types.js';
 
 export function isUrlLike(str: string): boolean {
   if (!str) return false;
-  return /^(https?:\/\/|git@|[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+:)/i.test(str) || str.endsWith('.git');
+  return (
+    /^(https?:\/\/|git@|[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+:)/i.test(str) ||
+    str.endsWith('.git') ||
+    str.includes('://')
+  );
+}
+
+export function sanitizeProjectName(str: string): string {
+  if (!str) return 'app';
+
+  let cleaned = str.trim();
+
+  if (cleaned.includes('?')) {
+    cleaned = cleaned.split('?')[0];
+  }
+
+  cleaned = cleaned.replace(/[/:\\]+$/, '');
+  cleaned = cleaned.replace(/\.git$/i, '').trim();
+
+  if (isUrlLike(cleaned) || /[/:\\]/.test(cleaned)) {
+    const parts = cleaned.split(/[/:\\]/).filter((p) => p.length > 0);
+    const last = parts[parts.length - 1];
+    if (last && last.length > 0) {
+      cleaned = last;
+    }
+  }
+
+  cleaned = cleaned
+    .replace(/[^a-zA-Z0-9_.-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  return cleaned || 'app';
 }
 
 const durationSchema = z.union([z.string(), z.number()]);
@@ -89,6 +121,7 @@ export const deployraConfigSchema = z.object({
         .object({
           name: z.string(),
           action: z.enum(['start', 'restart', 'reload', 'none']).default('restart'),
+          stopBeforeBuild: z.boolean().default(false),
           script: z.string().optional(),
           command: z.string().optional(),
           memoryMax: z.string().optional(),
@@ -139,8 +172,8 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
   const deployTimeoutMs = parseDurationMs(data.deploy.timeout);
   const retryBackoffMs = parseDurationMs(data.deploy.retry.backoff);
 
-  // Normalize Service config (default name to project name if not specified)
-  const serviceName = data.deploy.service?.name ?? data.project.name;
+  const projectName = sanitizeProjectName(data.project.name);
+  const serviceName = sanitizeProjectName(data.deploy.service?.name ?? projectName);
   const serviceAction = data.deploy.service?.action ?? 'restart';
 
   // Normalize Ready check config
@@ -172,14 +205,14 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
   }
 
   const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp';
-  const defaultWorkspacePath = path.join(homeDir, '.deployra/workspaces', data.project.name);
+  const defaultWorkspacePath = path.join(homeDir, '.deployra/workspaces', projectName);
   const resolvedWorkspacePath = data.deploy.workspacePath
     ? path.resolve(data.deploy.workspacePath)
     : defaultWorkspacePath;
 
   return {
     project: {
-      name: data.project.name,
+      name: projectName,
       path: data.project.path,
     },
     source: {
@@ -204,6 +237,7 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
       service: {
         name: serviceName,
         action: serviceAction,
+        stopBeforeBuild: data.deploy.service?.stopBeforeBuild ?? false,
         script: data.deploy.service?.script,
         command: data.deploy.service?.command,
         memoryMax: data.deploy.service?.memoryMax,
