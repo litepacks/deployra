@@ -272,6 +272,10 @@ export class DeploymentPipelineRunner {
     for (const [stepName, cmdList] of Object.entries(config.deploy.commands)) {
       if (Array.isArray(cmdList) && cmdList.length > 0) {
         await this.runStep(deploymentId, stepName, async () => {
+          if (stepName === 'install' && !isDryRun) {
+            this.safePurgeNodeModules(workingDir);
+          }
+
           for (const cmdStr of cmdList) {
             await this.executeCommandWithRetry(
               cmdStr,
@@ -435,6 +439,14 @@ export class DeploymentPipelineRunner {
         return;
       } catch (err: any) {
         lastErr = err;
+        const errMsg = String(err.message || '');
+        if ((errMsg.includes('ENOTEMPTY') || errMsg.includes('rmdir')) && !isDryRun) {
+          logger.warn(
+            `Detected ENOTEMPTY directory lock in '${cwd}'. Purging/renaming node_modules before command retry...`,
+          );
+          this.safePurgeNodeModules(cwd);
+        }
+
         if (attempt < maxAttempts) {
           logger.warn(
             `Command '${cmdStr}' failed (attempt ${attempt}/${maxAttempts}). Retrying in ${retryConfig.backoffMs}ms...`,
@@ -444,6 +456,40 @@ export class DeploymentPipelineRunner {
       }
     }
     throw lastErr;
+  }
+
+  private safePurgeNodeModules(workingDir: string): void {
+    const nodeModulesDir = path.join(workingDir, 'node_modules');
+    if (!fs.existsSync(nodeModulesDir)) return;
+
+    try {
+      fs.rmSync(nodeModulesDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    } catch {
+      // Fallback: If rmSync fails (e.g. ENOTEMPTY / EBUSY), use POSIX atomic rename to unblock install step
+      try {
+        const oldDir = path.join(workingDir, `.node_modules_old_${Date.now()}`);
+        fs.renameSync(nodeModulesDir, oldDir);
+        logger.info(
+          `Renamed locked node_modules in '${workingDir}' to '${path.basename(oldDir)}' to guarantee clean install.`,
+        );
+        setTimeout(() => {
+          try {
+            fs.rmSync(oldDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+          } catch {
+            // Ignore background cleanup error for renamed old dir
+          }
+        }, 3000);
+      } catch (renameErr: any) {
+        logger.warn(
+          `Could not purge or rename node_modules in '${workingDir}': ${renameErr.message}`,
+        );
+      }
+    }
   }
 
   private reloadConfigFromWorkingDir(
