@@ -273,6 +273,13 @@ export class DeploymentPipelineRunner {
       if (Array.isArray(cmdList) && cmdList.length > 0) {
         await this.runStep(deploymentId, stepName, async () => {
           if (stepName === 'install' && !isDryRun) {
+            // Stop service before install to release file handles on node_modules,
+            // preventing ENOTEMPTY errors during npm ci's directory removal
+            try {
+              await this.unitupAdapter.stop(config.deploy.service.name);
+            } catch {
+              // Service may already be stopped — safe to ignore
+            }
             this.safePurgeNodeModules(workingDir);
           }
 
@@ -466,8 +473,8 @@ export class DeploymentPipelineRunner {
       fs.rmSync(nodeModulesDir, {
         recursive: true,
         force: true,
-        maxRetries: 5,
-        retryDelay: 100,
+        maxRetries: 10,
+        retryDelay: 500,
       });
     } catch {
       // Fallback: If rmSync fails (e.g. ENOTEMPTY / EBUSY), use POSIX atomic rename to unblock install step
