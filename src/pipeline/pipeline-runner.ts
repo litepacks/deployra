@@ -22,6 +22,29 @@ export class DeploymentPipelineRunner {
   private projectRepo = new ProjectRepository();
   private deploymentRepo = new DeploymentRepository();
   private stateRepo = new StateRepository();
+  private activeAbortControllers = new Map<string, AbortController>();
+
+  public abortDeployment(deploymentId: string, reason = 'Deployment cancelled'): boolean {
+    const controller = this.activeAbortControllers.get(deploymentId);
+    if (controller) {
+      controller.abort(new Error(reason));
+      this.activeAbortControllers.delete(deploymentId);
+      logger.info(`Aborted running deployment #${deploymentId}: ${reason}`, { deploymentId });
+      return true;
+    }
+    return false;
+  }
+
+  public abortAllDeploymentsForProject(projectName: string, reason = 'Newer deployment started'): void {
+    for (const [depId, controller] of this.activeAbortControllers.entries()) {
+      controller.abort(new Error(reason));
+      this.activeAbortControllers.delete(depId);
+      logger.info(`Aborted active deployment #${depId} for project '${projectName}': ${reason}`, {
+        project: projectName,
+        deploymentId: depId,
+      });
+    }
+  }
 
   public async runDeployment(payload: DeploymentJobPayload): Promise<void> {
     const { deploymentId, projectName, targetSha, previousSha } = payload;
@@ -35,6 +58,9 @@ export class DeploymentPipelineRunner {
       );
       return;
     }
+
+    const abortController = new AbortController();
+    this.activeAbortControllers.set(deploymentId, abortController);
 
     let config = project.config;
     const isIsolated = config.deploy.strategy === 'isolated';
@@ -146,15 +172,22 @@ export class DeploymentPipelineRunner {
         config,
         isIsolated,
         isDryRun,
+        abortController.signal,
       );
 
       // Step 8: service-action
       await this.runStep(deploymentId, 'service-action', async () => {
+        if (abortController.signal.aborted) {
+          throw new DeployraError('Deployment was aborted before service-action');
+        }
         await this.performServiceAction(project.path, config, isDryRun);
       });
 
       // Step 9: ready-check
       await this.runStep(deploymentId, 'ready-check', async () => {
+        if (abortController.signal.aborted) {
+          throw new DeployraError('Deployment was aborted before ready-check');
+        }
         if (config.deploy.ready.checks.length > 0) {
           if (isDryRun) {
             logger.info(
@@ -175,6 +208,9 @@ export class DeploymentPipelineRunner {
 
       // Step 10: complete
       await this.runStep(deploymentId, 'complete', async () => {
+        if (abortController.signal.aborted) {
+          throw new DeployraError('Deployment was aborted before complete');
+        }
         if (!isDryRun) {
           this.projectRepo.updateLastSuccessfulSha(projectName, targetSha);
         } else {
@@ -190,6 +226,7 @@ export class DeploymentPipelineRunner {
         );
       });
     } catch (err: any) {
+      this.abortDeployment(deploymentId, err.message || 'Deployment failed');
       await this.handleDeploymentFailure(
         deploymentId,
         projectName,
@@ -200,6 +237,7 @@ export class DeploymentPipelineRunner {
         err,
       );
     } finally {
+      this.activeAbortControllers.delete(deploymentId);
       // Step 11: release-lock (Always executed)
       try {
         await this.runStep(deploymentId, 'release-lock', async () => {
@@ -268,10 +306,15 @@ export class DeploymentPipelineRunner {
     config: NormalizedDeployraConfig,
     isIsolated: boolean,
     isDryRun = false,
+    signal?: AbortSignal,
   ): Promise<void> {
     for (const [stepName, cmdList] of Object.entries(config.deploy.commands)) {
       if (Array.isArray(cmdList) && cmdList.length > 0) {
         await this.runStep(deploymentId, stepName, async () => {
+          if (signal?.aborted) {
+            throw new DeployraError(`Deployment was aborted before step '${stepName}'`);
+          }
+
           if (stepName === 'install' && !isDryRun) {
             // Stop service before install to release file handles on node_modules
             try {
@@ -282,12 +325,16 @@ export class DeploymentPipelineRunner {
           }
 
           for (const cmdStr of cmdList) {
+            if (signal?.aborted) {
+              throw new DeployraError(`Deployment was aborted before command: '${cmdStr}'`);
+            }
             await this.executeCommandWithRetry(
               cmdStr,
               workingDir,
               config.deploy.retry,
               isDryRun,
               config.deploy.timeoutMs,
+              signal,
             );
           }
 
@@ -420,6 +467,7 @@ export class DeploymentPipelineRunner {
     retryConfig: { attempts: number; backoffMs: number },
     isDryRun = false,
     timeoutMs?: number,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (isDryRun) {
       logger.info(`[DRY-RUN] Would execute command: '${cmdStr}' in working directory '${cwd}'`);
@@ -432,10 +480,14 @@ export class DeploymentPipelineRunner {
 
     let lastErr: Error | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (signal?.aborted) {
+        throw new DeployraError(`Command '${cmdStr}' aborted`);
+      }
       try {
         await safeExec(cmd, args, {
           cwd,
           timeoutMs,
+          signal,
           env: {
             CI: 'true',
             FORCE_COLOR: '0',
@@ -444,6 +496,10 @@ export class DeploymentPipelineRunner {
         return;
       } catch (err: any) {
         lastErr = err;
+
+        if (signal?.aborted) {
+          throw err;
+        }
 
         if (attempt < maxAttempts) {
           logger.warn(
