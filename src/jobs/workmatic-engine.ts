@@ -117,7 +117,10 @@ export class WorkmaticEngine {
 
   public async cancelPendingJobsForProject(projectName: string): Promise<void> {
     if (this.runner) {
-      this.runner.abortAllDeploymentsForProject(projectName, 'Cancelled by newer commit deployment');
+      this.runner.abortAllDeploymentsForProject(
+        projectName,
+        'Cancelled by newer commit deployment',
+      );
     }
     const active = this.deploymentRepo.getActiveDeployments(projectName);
     for (const dep of active) {
@@ -127,10 +130,13 @@ export class WorkmaticEngine {
           'cancelled',
           'Cancelled by newer commit deployment',
         );
-        logger.info(`Cancelled older ${dep.status} deployment #${dep.id} for project '${projectName}'`, {
-          project: projectName,
-          deploymentId: dep.id,
-        });
+        logger.info(
+          `Cancelled older ${dep.status} deployment #${dep.id} for project '${projectName}'`,
+          {
+            project: projectName,
+            deploymentId: dep.id,
+          },
+        );
       }
     }
   }

@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import net from 'node:net';
-import { performHealthCheck } from 'ready-checker';
 import type { IndividualCheckConfig, NormalizedDeployraConfig } from '../config/types.js';
 import { ReadinessError } from '../errors/deployra-error.js';
+import { parseCommandString } from '../runtime/unitup-adapter.js';
 import { safeExec } from '../security/exec.js';
 
 export interface SingleCheckResult {
@@ -35,19 +35,47 @@ export class ReadyCheckerAdapter {
       switch (check.type) {
         case 'http':
         case 'https': {
-          // Delegate HTTP/HTTPS health checks directly to ready-checker package
-          const res = await performHealthCheck(check.url, {
-            timeout: timeoutMs,
-            retries: 0,
-            retryDelay: 500,
-          });
+          try {
+            const res = await fetch(check.url, {
+              signal: AbortSignal.timeout(timeoutMs),
+              headers: check.expect?.headers,
+            });
 
-          return {
-            type: check.type,
-            success: res.success,
-            duration: res.elapsed || Date.now() - startTime,
-            error: res.error,
-          };
+            const expectedStatus = check.expect?.status ?? 200;
+            if (res.status !== expectedStatus) {
+              return {
+                type: check.type,
+                success: false,
+                duration: Date.now() - startTime,
+                error: `HTTP status ${res.status}, expected ${expectedStatus}`,
+              };
+            }
+
+            if (check.expect?.bodyIncludes) {
+              const body = await res.text();
+              if (!body.includes(check.expect.bodyIncludes)) {
+                return {
+                  type: check.type,
+                  success: false,
+                  duration: Date.now() - startTime,
+                  error: `Response body does not contain expected '${check.expect.bodyIncludes}'`,
+                };
+              }
+            }
+
+            return {
+              type: check.type,
+              success: true,
+              duration: Date.now() - startTime,
+            };
+          } catch (err: any) {
+            return {
+              type: check.type,
+              success: false,
+              duration: Date.now() - startTime,
+              error: err.message || 'Health check request failed',
+            };
+          }
         }
 
         case 'tcp': {
@@ -84,9 +112,9 @@ export class ReadyCheckerAdapter {
         }
 
         case 'command': {
-          const parts = check.command.split(' ');
-          const cmd = parts[0];
-          const args = parts.slice(1);
+          const parsed = parseCommandString(check.command);
+          const cmd = parsed.command;
+          const args = parsed.args || [];
           const expectedExitCode = check.expectedExitCode ?? 0;
 
           try {

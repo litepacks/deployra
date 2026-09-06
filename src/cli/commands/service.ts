@@ -54,7 +54,7 @@ export async function serviceCommand(
             command: process.execPath,
             args: [scriptPath, 'watch'],
             cwd: process.cwd(),
-            restartSec: '3s',
+            restart: 'always',
             force: true,
           });
         } else {
@@ -63,7 +63,7 @@ export async function serviceCommand(
             command: 'deployra',
             args: ['watch'],
             cwd: process.cwd(),
-            restartSec: '3s',
+            restart: 'always',
             force: true,
           });
         }

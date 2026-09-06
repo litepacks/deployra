@@ -1,6 +1,7 @@
 import { WorkmaticEngine } from './jobs/workmatic-engine.js';
 import { logger } from './logging/logger.js';
 import { DeploymentPipelineRunner } from './pipeline/pipeline-runner.js';
+import { assertNonRootUser } from './security/path-validator.js';
 import { closeDatabase } from './storage/database.js';
 import { StateRepository } from './storage/state-repository.js';
 import { SourceWatcher } from './watcher/source-watcher.js';
@@ -22,6 +23,8 @@ export class DeployraDaemon {
 
   public async start(targetProjectName?: string, dryRun = false): Promise<void> {
     try {
+      assertNonRootUser();
+
       logger.info(`${dryRun ? '[DRY-RUN MODE] ' : ''}Starting Deployra Deployment Daemon...`);
 
       this.registerSignalHandlers();
@@ -62,10 +65,15 @@ export class DeployraDaemon {
     process.on('SIGINT', () => handleShutdown('SIGINT'));
     process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 
-    process.on('uncaughtException', (err: Error) => {
+    process.on('uncaughtException', async (err: Error) => {
       logger.error(`Uncaught Exception in Deployra Daemon: ${err.message}`, {
         stack: err.stack,
       });
+      try {
+        await this.shutdown();
+      } finally {
+        process.exit(1);
+      }
     });
 
     process.on('unhandledRejection', (reason: any) => {

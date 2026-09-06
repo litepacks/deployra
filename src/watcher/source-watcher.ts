@@ -177,8 +177,6 @@ export class SourceWatcher {
         }
       }
 
-      this.projectRepo.updateLastSeenSha(projectName, remoteSha);
-
       logger.info(
         `${dryRun ? '[DRY-RUN] ' : ''}New commit detected for '${projectName}': ${remoteSha} (previous: ${proj.lastSuccessfulSha || 'none'})`,
         {
@@ -202,6 +200,8 @@ export class SourceWatcher {
           await this.workmaticEngine.cancelPendingJobsForProject(projectName);
         }
       }
+
+      this.projectRepo.updateLastSeenSha(projectName, remoteSha);
 
       // Create deployment record
       const deploymentId = `dep_${nanoid(10)}`;

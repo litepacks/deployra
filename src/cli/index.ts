@@ -39,7 +39,7 @@ function getVersion(): string {
   } catch {
     // Fallback if filesystem read fails
   }
-  return '0.0.8';
+  return '0.2.9';
 }
 
 const program = new Command();
@@ -172,6 +172,7 @@ program
   .description('Completely uninstall Deployra, systemd daemon service, and data directory')
   .option('-k, --keep-data', 'Preserve Deployra database and configuration directory (~/.deployra)')
   .option('-p, --purge', 'Purge Deployra database and configuration directory (~/.deployra)')
+  .option('-g, --global', 'Uninstall global npm package')
   .action(async (options) => {
     await uninstallCommand(options);
   });

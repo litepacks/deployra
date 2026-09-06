@@ -67,10 +67,18 @@ export class Logger {
         break;
     }
 
-    const projectStr = entry.project ? chalk.cyan(`[${entry.project}]`) : '';
-    const depStr = entry.deploymentId ? chalk.dim(`(#${entry.deploymentId})`) : '';
-    const stepStr = entry.step ? chalk.bold(`[${entry.step}]`) : '';
-    const durationStr = entry.durationMs !== undefined ? chalk.gray(`(${entry.durationMs}ms)`) : '';
+    const project = entry.project || (entry.meta?.project as string | undefined);
+    const deploymentId = entry.deploymentId || (entry.meta?.deploymentId as string | undefined);
+    const step = entry.step || (entry.meta?.step as string | undefined);
+    const durationMs =
+      entry.durationMs !== undefined
+        ? entry.durationMs
+        : (entry.meta?.durationMs as number | undefined);
+
+    const projectStr = project ? chalk.cyan(`[${project}]`) : '';
+    const depStr = deploymentId ? chalk.dim(`(#${deploymentId})`) : '';
+    const stepStr = step ? chalk.bold(`[${step}]`) : '';
+    const durationStr = durationMs !== undefined ? chalk.gray(`(${durationMs}ms)`) : '';
 
     const line = [timeStr, levelStr, projectStr, depStr, stepStr, fullEntry.message, durationStr]
       .filter(Boolean)

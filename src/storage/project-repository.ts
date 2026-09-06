@@ -32,7 +32,6 @@ export class ProjectRepository {
   }
 
   public saveProject(config: NormalizedDeployraConfig): StoredProject {
-    this.cleanupLegacyUrlProjects();
     const db = getDatabase();
     const now = Date.now();
 
@@ -109,7 +108,6 @@ export class ProjectRepository {
   }
 
   public getAllProjects(): StoredProject[] {
-    this.cleanupLegacyUrlProjects();
     const db = getDatabase();
     const rows = db.prepare(`SELECT * FROM projects ORDER BY name ASC`).all() as any[];
     return rows.map((row) => {
@@ -136,7 +134,6 @@ export class ProjectRepository {
   }
 
   public deleteProject(name: string): boolean {
-    this.cleanupLegacyUrlProjects();
     const db = getDatabase();
     const sanitized = sanitizeProjectName(name);
     const result = db

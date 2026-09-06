@@ -22,10 +22,13 @@ export class StateRepository {
         .prepare(`SELECT status FROM deployments WHERE id = ?`)
         .get(existing.locked_by) as any;
 
-      const isHolderActive =
-        !lockHolderDep || ['queued', 'running', 'rolling_back'].includes(lockHolderDep.status);
+      const isHolderFinished =
+        lockHolderDep &&
+        ['success', 'failed', 'cancelled', 'rolled_back', 'rollback_failed'].includes(
+          lockHolderDep.status,
+        );
 
-      if (lockAge > timeoutMs || !isHolderActive) {
+      if (lockAge > timeoutMs || isHolderFinished) {
         db.prepare(`DELETE FROM project_locks WHERE project_name = ? OR project_name = ?`).run(
           projectName,
           rawProjectName,

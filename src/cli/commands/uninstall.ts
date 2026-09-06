@@ -46,8 +46,8 @@ export async function uninstallCommand(
     console.log(chalk.gray(`• Preserved Deployra data directory (${dataDir}).`));
   }
 
-  // 4. Uninstall global npm package if requested or default
-  if (options.global !== false) {
+  // 4. Uninstall global npm package if explicitly requested
+  if (options.global === true) {
     console.log(chalk.blue('📦 Uninstalling deployra globally via npm...'));
     try {
       const res = await safeExec('npm', ['uninstall', '-g', 'deployra'], { timeoutMs: 60000 });
@@ -61,6 +61,10 @@ export async function uninstallCommand(
     } catch (err: any) {
       console.log(chalk.yellow(`• Note: Global npm uninstall error: ${err.message}`));
     }
+  } else {
+    console.log(
+      chalk.gray('• Global npm package retained (use --global to also remove npm package).'),
+    );
   }
 
   console.log(chalk.bold.green('\n✔ Deployra has been completely uninstalled.\n'));

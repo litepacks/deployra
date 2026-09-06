@@ -22,12 +22,15 @@ export class DeploymentPipelineRunner {
   private projectRepo = new ProjectRepository();
   private deploymentRepo = new DeploymentRepository();
   private stateRepo = new StateRepository();
-  private activeAbortControllers = new Map<string, AbortController>();
+  private activeAbortControllers = new Map<
+    string,
+    { controller: AbortController; projectName: string }
+  >();
 
   public abortDeployment(deploymentId: string, reason = 'Deployment cancelled'): boolean {
-    const controller = this.activeAbortControllers.get(deploymentId);
-    if (controller) {
-      controller.abort(new Error(reason));
+    const entry = this.activeAbortControllers.get(deploymentId);
+    if (entry) {
+      entry.controller.abort(new Error(reason));
       this.activeAbortControllers.delete(deploymentId);
       logger.info(`Aborted running deployment #${deploymentId}: ${reason}`, { deploymentId });
       return true;
@@ -35,14 +38,19 @@ export class DeploymentPipelineRunner {
     return false;
   }
 
-  public abortAllDeploymentsForProject(projectName: string, reason = 'Newer deployment started'): void {
-    for (const [depId, controller] of this.activeAbortControllers.entries()) {
-      controller.abort(new Error(reason));
-      this.activeAbortControllers.delete(depId);
-      logger.info(`Aborted active deployment #${depId} for project '${projectName}': ${reason}`, {
-        project: projectName,
-        deploymentId: depId,
-      });
+  public abortAllDeploymentsForProject(
+    projectName: string,
+    reason = 'Newer deployment started',
+  ): void {
+    for (const [depId, entry] of Array.from(this.activeAbortControllers.entries())) {
+      if (entry.projectName === projectName) {
+        entry.controller.abort(new Error(reason));
+        this.activeAbortControllers.delete(depId);
+        logger.info(`Aborted active deployment #${depId} for project '${projectName}': ${reason}`, {
+          project: projectName,
+          deploymentId: depId,
+        });
+      }
     }
   }
 
@@ -60,13 +68,25 @@ export class DeploymentPipelineRunner {
     }
 
     const abortController = new AbortController();
-    this.activeAbortControllers.set(deploymentId, abortController);
+    this.activeAbortControllers.set(deploymentId, {
+      controller: abortController,
+      projectName,
+    });
 
     let config = project.config;
     const isIsolated = config.deploy.strategy === 'isolated';
     const workingDir = isIsolated ? config.deploy.workspacePath : project.path;
     const isDryRun = Boolean(payload.dryRun);
     let lockAcquired = false;
+
+    const initialDep = this.deploymentRepo.getDeployment(deploymentId);
+    if (initialDep?.status === 'cancelled') {
+      logger.info(`Deployment #${deploymentId} was cancelled before starting.`, {
+        project: projectName,
+        deploymentId,
+      });
+      return;
+    }
 
     this.deploymentRepo.updateStatus(deploymentId, 'running');
 
@@ -226,16 +246,37 @@ export class DeploymentPipelineRunner {
         );
       });
     } catch (err: any) {
+      const currentDep = this.deploymentRepo.getDeployment(deploymentId);
+      const isCancelled =
+        currentDep?.status === 'cancelled' ||
+        abortController.signal.aborted ||
+        Boolean(err.message?.toLowerCase().includes('cancelled'));
+
       this.abortDeployment(deploymentId, err.message || 'Deployment failed');
-      await this.handleDeploymentFailure(
-        deploymentId,
-        projectName,
-        targetSha,
-        previousSha ?? project.lastSuccessfulSha,
-        config,
-        lockAcquired,
-        err,
-      );
+
+      if (isCancelled) {
+        if (currentDep?.status !== 'cancelled') {
+          this.deploymentRepo.updateStatus(
+            deploymentId,
+            'cancelled',
+            err.message || 'Deployment cancelled',
+          );
+        }
+        logger.info(`Deployment #${deploymentId} was cancelled for project '${projectName}'.`, {
+          project: projectName,
+          deploymentId,
+        });
+      } else {
+        await this.handleDeploymentFailure(
+          deploymentId,
+          projectName,
+          targetSha,
+          previousSha ?? project.lastSuccessfulSha,
+          config,
+          lockAcquired,
+          err,
+        );
+      }
     } finally {
       this.activeAbortControllers.delete(deploymentId);
       // Step 11: release-lock (Always executed)
@@ -438,6 +479,11 @@ export class DeploymentPipelineRunner {
       status: 'running',
       startedAt: startTime,
     });
+
+    const currentDep = this.deploymentRepo.getDeployment(deploymentId);
+    if (currentDep?.status === 'cancelled') {
+      throw new DeployraError(`Deployment #${deploymentId} was cancelled`);
+    }
 
     try {
       await action();

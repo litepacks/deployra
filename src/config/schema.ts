@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import { ConfigValidationError } from '../errors/deployra-error.js';
+import { assertSafePath } from '../security/path-validator.js';
 import { parseDurationMs } from './duration.js';
 import type { NormalizedDeployraConfig } from './types.js';
 
@@ -206,14 +207,15 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
 
   const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp';
   const defaultWorkspacePath = path.join(homeDir, '.deployra/workspaces', projectName);
-  const resolvedWorkspacePath = data.deploy.workspacePath
-    ? path.resolve(data.deploy.workspacePath)
-    : defaultWorkspacePath;
+  const resolvedWorkspacePath = assertSafePath(
+    data.deploy.workspacePath ? path.resolve(data.deploy.workspacePath) : defaultWorkspacePath,
+  );
+  const resolvedProjectPath = assertSafePath(path.resolve(data.project.path));
 
   return {
     project: {
       name: projectName,
-      path: data.project.path,
+      path: resolvedProjectPath,
     },
     source: {
       remote: data.source.remote,

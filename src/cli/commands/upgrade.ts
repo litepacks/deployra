@@ -26,7 +26,7 @@ export function getCurrentVersion(): string {
   } catch {
     // Fallback
   }
-  return '0.0.8';
+  return '0.2.9';
 }
 
 export async function fetchLatestVersion(): Promise<string> {

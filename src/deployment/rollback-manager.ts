@@ -1,9 +1,10 @@
+import fs from 'node:fs';
 import type { NormalizedDeployraConfig } from '../config/types.js';
 import { RollbackError } from '../errors/deployra-error.js';
 import { GitClient } from '../git/git-client.js';
 import { logger } from '../logging/logger.js';
 import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
-import { UnitupAdapter } from '../runtime/unitup-adapter.js';
+import { parseCommandString, UnitupAdapter } from '../runtime/unitup-adapter.js';
 import { safeExec } from '../security/exec.js';
 
 export class RollbackManager {
@@ -24,20 +25,32 @@ export class RollbackManager {
       },
     );
 
+    const isIsolated = data.config.deploy.strategy === 'isolated';
+    const workingDir = isIsolated ? data.config.deploy.workspacePath : data.projectPath;
+
     try {
       // 1. Reset repository to previous successful SHA
       await this.gitClient.resetHard(data.projectPath, data.previousSuccessfulSha);
       await this.gitClient.cleanUntracked(data.projectPath);
 
+      if (isIsolated && fs.existsSync(workingDir)) {
+        await this.gitClient.resetHard(workingDir, data.previousSuccessfulSha);
+        await this.gitClient.cleanUntracked(workingDir);
+      }
+
       // 2. Re-run install and build commands if configured
       for (const cmdStr of data.config.deploy.commands.install || []) {
-        const parts = cmdStr.split(' ');
-        await safeExec(parts[0], parts.slice(1), { cwd: data.projectPath });
+        const parsed = parseCommandString(cmdStr);
+        await safeExec(parsed.command, parsed.args || [], { cwd: workingDir });
       }
 
       for (const cmdStr of data.config.deploy.commands.build || []) {
-        const parts = cmdStr.split(' ');
-        await safeExec(parts[0], parts.slice(1), { cwd: data.projectPath });
+        const parsed = parseCommandString(cmdStr);
+        await safeExec(parsed.command, parsed.args || [], { cwd: workingDir });
+      }
+
+      if (isIsolated && fs.existsSync(workingDir)) {
+        await this.syncIsolatedWorkspace(workingDir, data.projectPath);
       }
 
       // 3. Restart systemd service via Unitup
@@ -60,6 +73,27 @@ export class RollbackManager {
       throw new RollbackError(
         `Automated rollback failed for project '${data.projectName}': ${err.message}`,
       );
+    }
+  }
+
+  private async syncIsolatedWorkspace(sourceDir: string, targetDir: string): Promise<void> {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    try {
+      await safeExec('rsync', [
+        '-av',
+        '--delete',
+        '--exclude=.git',
+        `${sourceDir}/`,
+        `${targetDir}/`,
+      ]);
+    } catch {
+      fs.cpSync(sourceDir, targetDir, {
+        recursive: true,
+        force: true,
+        filter: (src) => !src.includes('/.git'),
+      });
     }
   }
 }

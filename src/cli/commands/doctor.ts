@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import chalk from 'chalk';
 import { loadConfig } from '../../config/parser.js';
 import { UnitupAdapter } from '../../runtime/unitup-adapter.js';
@@ -36,9 +37,13 @@ export async function doctorCommand(configPath?: string): Promise<void> {
   // 2. SQLite Database Writable
   try {
     const dbPath = getDatabasePath();
-    const dir = dbPath.substring(0, dbPath.lastIndexOf('/'));
-    fs.accessSync(dir, fs.constants.W_OK);
-    report('SQLite database path writable', true, dbPath);
+    if (dbPath === ':memory:') {
+      report('SQLite database path writable', true, ':memory: (in-memory mode)');
+    } else {
+      const dir = path.dirname(dbPath);
+      fs.accessSync(dir, fs.constants.W_OK);
+      report('SQLite database path writable', true, dbPath);
+    }
   } catch (err: any) {
     report('SQLite database path writable', false, err.message);
   }

@@ -28,6 +28,7 @@ export function getDatabase(): SQLiteDatabase {
   const dbPath = getDatabasePath();
   dbInstance = new Database(dbPath);
   dbInstance.pragma('journal_mode = WAL');
+  dbInstance.pragma('foreign_keys = ON');
 
   initDatabaseSchema(dbInstance);
   return dbInstance;
@@ -93,6 +94,10 @@ function initDatabaseSchema(db: SQLiteDatabase): void {
       locked_by TEXT NOT NULL,
       locked_at INTEGER NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_deployments_project_created ON deployments(project_name, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_deployments_status ON deployments(status);
+    CREATE INDEX IF NOT EXISTS idx_deployment_steps_deployment ON deployment_steps(deployment_id);
   `);
 
   try {
@@ -111,5 +116,15 @@ function initDatabaseSchema(db: SQLiteDatabase): void {
     db.exec(`ALTER TABLE deployments ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 0;`);
   } catch {
     // Column already exists
+  }
+
+  // One-time migration: purge any legacy invalid/URL-like project names
+  try {
+    db.exec(`
+      DELETE FROM projects
+      WHERE name LIKE 'http://%' OR name LIKE 'https://%' OR name LIKE '%/%' OR name LIKE '%:%'
+    `);
+  } catch {
+    // Ignore migration cleanup errors
   }
 }
