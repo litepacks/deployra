@@ -116,7 +116,9 @@ describe('Notifications & Alerting System', () => {
     expect(embed.title).toContain('[discord-app] Deployment #dep_discord_1: failed');
     expect(embed.color).toBe(0xe74c3c); // red
     expect(embed.fields.some((f: any) => f.name === 'Status' && f.value === 'failed')).toBe(true);
-    expect(embed.fields.some((f: any) => f.name === 'Error' && f.value.includes('Compile error'))).toBe(true);
+    expect(
+      embed.fields.some((f: any) => f.name === 'Error' && f.value.includes('Compile error')),
+    ).toBe(true);
   });
 
   it('formats and dispatches Telegram Bot API notifications', async () => {
