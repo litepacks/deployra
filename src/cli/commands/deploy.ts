@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { resolveProjectName } from '../../config/parser.js';
 import { WorkmaticEngine } from '../../jobs/workmatic-engine.js';
+import { DeploymentPipelineRunner } from '../../pipeline/pipeline-runner.js';
 import { isDaemonRunning } from '../../runtime/daemon-check.js';
 import { closeDatabase } from '../../storage/database.js';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
@@ -8,7 +9,7 @@ import { SourceWatcher } from '../../watcher/source-watcher.js';
 
 export async function deployCommand(
   projectName?: string,
-  options?: { dryRun?: boolean },
+  options?: { dryRun?: boolean; inline?: boolean },
 ): Promise<void> {
   const targetProject = resolveProjectName(projectName);
   if (!targetProject) {
@@ -21,6 +22,7 @@ export async function deployCommand(
   }
 
   const isDryRun = Boolean(options?.dryRun);
+  const isInline = Boolean(options?.inline);
   const workmatic = new WorkmaticEngine();
   const depRepo = new DeploymentRepository();
   const watcher = new SourceWatcher(workmatic);
@@ -32,12 +34,18 @@ export async function deployCommand(
           `⚡ [DRY-RUN MODE] Simulating deployment for '${targetProject}' (no real shell/service commands will be run)...`,
         ),
       );
+    } else if (isInline) {
+      console.log(
+        chalk.blue.bold(
+          `🚀 [INLINE MODE] Executing deployment pipeline directly in current process...`,
+        ),
+      );
     } else {
       const daemonActive = await isDaemonRunning();
       if (!daemonActive) {
         console.log(
           chalk.yellow(
-            `⚠ Warning: Deployra daemon ('deployra-daemon') is not running. Deployment will remain queued until the daemon is started.`,
+            `⚠ Warning: Deployra daemon ('deployra-daemon') is not running. Deployment will remain queued until daemon is started. (Tip: use '--inline' to run directly without daemon).`,
           ),
         );
       }
@@ -47,21 +55,38 @@ export async function deployCommand(
     const depId = await watcher.checkProject(targetProject, 'manual', isDryRun);
 
     if (depId) {
-      console.log(
-        chalk.green(
-          `✔ ${isDryRun ? '[DRY-RUN] ' : ''}Deployment queued (ID: #${depId}). Processing...`,
-        ),
-      );
-
-      let finalStatus = 'queued';
-      for (let i = 0; i < 120; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
+      if (isInline) {
         const dep = depRepo.getDeployment(depId);
-        if (dep && dep.status !== 'queued' && dep.status !== 'running') {
-          finalStatus = dep.status;
-          break;
+        if (dep) {
+          const runner = new DeploymentPipelineRunner();
+          await runner.runDeployment({
+            deploymentId: dep.id,
+            projectName: dep.projectName,
+            previousSha: dep.previousSha,
+            targetSha: dep.targetSha,
+            triggerType: dep.triggerType,
+            dryRun: dep.dryRun,
+            triggeredAt: dep.createdAt,
+          });
+        }
+      } else {
+        console.log(
+          chalk.green(
+            `✔ ${isDryRun ? '[DRY-RUN] ' : ''}Deployment queued (ID: #${depId}). Processing...`,
+          ),
+        );
+
+        for (let i = 0; i < 120; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          const dep = depRepo.getDeployment(depId);
+          if (dep && dep.status !== 'queued' && dep.status !== 'running') {
+            break;
+          }
         }
       }
+
+      const finalDep = depRepo.getDeployment(depId);
+      const finalStatus = finalDep?.status || 'unknown';
 
       if (finalStatus === 'success') {
         if (isDryRun) {
@@ -75,8 +100,10 @@ export async function deployCommand(
         }
       } else if (finalStatus === 'rolled_back') {
         console.log(chalk.yellow(`⚠ Deployment #${depId} failed and was rolled back.`));
+        if (isInline) process.exitCode = 1;
       } else if (finalStatus === 'failed') {
         console.log(chalk.red(`✖ Deployment #${depId} failed.`));
+        if (isInline) process.exitCode = 1;
       } else {
         console.log(chalk.blue(`ℹ Deployment #${depId} current status: ${finalStatus}`));
       }
@@ -89,6 +116,7 @@ export async function deployCommand(
     }
   } catch (err: any) {
     console.error(chalk.red(`✖ Failed to trigger deployment: ${err.message}`));
+    if (isInline) process.exitCode = 1;
   } finally {
     closeDatabase();
   }

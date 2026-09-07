@@ -96,6 +96,7 @@ export class SourceWatcher {
     projectName: string,
     triggerType: 'poll' | 'manual' | 'webhook' = 'poll',
     dryRun = false,
+    explicitTargetSha?: string,
   ): Promise<string | null> {
     if (this.checkingProjects.has(projectName)) {
       logger.debug(
@@ -130,7 +131,9 @@ export class SourceWatcher {
         // Ignore disk config read errors on polling check
       }
 
-      const remoteSha = await this.gitClient.checkRemoteHead(proj.path, proj.remote, proj.branch);
+      const remoteSha =
+        explicitTargetSha ||
+        (await this.gitClient.checkRemoteHead(proj.path, proj.remote, proj.branch));
       this.errorCounts.set(projectName, 0); // Reset error count on success
 
       if (!remoteSha) {
@@ -205,7 +208,10 @@ export class SourceWatcher {
 
       // Create deployment record
       const deploymentId = `dep_${nanoid(10)}`;
-      const dynamicSteps = computeDeploymentSteps(proj.config.deploy.commands);
+      const dynamicSteps = computeDeploymentSteps(
+        proj.config.deploy.commands,
+        proj.config.deploy.strategy,
+      );
 
       this.deploymentRepo.createDeployment({
         id: deploymentId,

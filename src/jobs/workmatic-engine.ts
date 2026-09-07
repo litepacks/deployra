@@ -22,15 +22,23 @@ export interface DeploymentJobPayload {
   triggeredAt: number;
 }
 
+export interface WorkmaticEngineOptions {
+  concurrency?: number;
+  dbPath?: string;
+}
+
 export class WorkmaticEngine {
   private client: WorkmaticClient;
   private worker: WorkmaticWorker | null = null;
   private deploymentRepo: DeploymentRepository;
   private runner: DeploymentPipelineRunner | null = null;
   private db: ReturnType<typeof createDatabase>;
+  private concurrency: number;
+  private projectExecutionChains = new Map<string, Promise<void>>();
 
-  constructor() {
+  constructor(options?: WorkmaticEngineOptions) {
     const customDb =
+      options?.dbPath ||
       process.env.WORKMATIC_DB_PATH ||
       (process.env.DEPLOYRA_DB_PATH === ':memory:' ? ':memory:' : undefined);
 
@@ -44,9 +52,19 @@ export class WorkmaticEngine {
       dbPath = path.join(dir, 'workmatic.db');
     }
 
+    const parsedEnvConcurrency = process.env.DEPLOYRA_CONCURRENCY
+      ? Number.parseInt(process.env.DEPLOYRA_CONCURRENCY, 10)
+      : undefined;
+    const resolvedConcurrency = options?.concurrency ?? parsedEnvConcurrency ?? 4;
+    this.concurrency = Math.max(1, Number.isFinite(resolvedConcurrency) ? resolvedConcurrency : 4);
+
     this.db = createDatabase({ filename: dbPath });
     this.client = createClient({ db: this.db, queue: 'deployra.deploy' });
     this.deploymentRepo = new DeploymentRepository();
+  }
+
+  public getConcurrency(): number {
+    return this.concurrency;
   }
 
   public setPipelineRunner(runner: DeploymentPipelineRunner): void {
@@ -64,7 +82,8 @@ export class WorkmaticEngine {
     this.worker = createWorker({
       db: this.db,
       queue: 'deployra.deploy',
-      concurrency: 1,
+      concurrency: this.concurrency,
+      timeoutMs: 0,
     });
 
     this.worker.process(async (job: Job<DeploymentJobPayload>) => {
@@ -82,24 +101,63 @@ export class WorkmaticEngine {
         return;
       }
 
-      try {
-        await this.runner.runDeployment(payload);
-      } catch (err: any) {
-        logger.error(
-          `Unhandled error executing deployment pipeline for '${payload.projectName}': ${err.message}`,
-          {
-            project: payload.projectName,
-            deploymentId: payload.deploymentId,
-            error: err,
-          },
-        );
-      }
+      await this.runForProject(payload.projectName, async () => {
+        // Check if deployment was cancelled while waiting in the project queue
+        const currentDep = this.deploymentRepo.getDeployment(payload.deploymentId);
+        if (currentDep?.status === 'cancelled') {
+          logger.info(
+            `Skipping cancelled deployment job #${payload.deploymentId} for project '${payload.projectName}'`,
+            {
+              project: payload.projectName,
+              deploymentId: payload.deploymentId,
+            },
+          );
+          return;
+        }
+
+        try {
+          await this.runner!.runDeployment(payload);
+        } catch (err: any) {
+          logger.error(
+            `Unhandled error executing deployment pipeline for '${payload.projectName}': ${err.message}`,
+            {
+              project: payload.projectName,
+              deploymentId: payload.deploymentId,
+              error: err,
+            },
+          );
+        }
+      });
     });
 
     this.worker.start();
-    logger.info('Workmatic background job worker started.');
+    logger.info(`Workmatic background job worker started (concurrency: ${this.concurrency}).`);
 
     await this.recoverStaleJobs();
+  }
+
+  private async runForProject<T>(projectName: string, fn: () => Promise<T>): Promise<T> {
+    const previousPromise = this.projectExecutionChains.get(projectName) || Promise.resolve();
+    let resolveCurrent!: () => void;
+    const currentPromise = new Promise<void>((resolve) => {
+      resolveCurrent = resolve;
+    });
+    this.projectExecutionChains.set(projectName, currentPromise);
+
+    try {
+      await previousPromise;
+    } catch {
+      // Ignore errors from earlier deployment tasks in the project chain
+    }
+
+    try {
+      return await fn();
+    } finally {
+      resolveCurrent();
+      if (this.projectExecutionChains.get(projectName) === currentPromise) {
+        this.projectExecutionChains.delete(projectName);
+      }
+    }
   }
 
   public async enqueueDeployJob(payload: DeploymentJobPayload): Promise<string> {
@@ -165,6 +223,7 @@ export class WorkmaticEngine {
     if (this.worker) {
       await this.worker.stop();
       this.worker = null;
+      this.projectExecutionChains.clear();
       logger.info('Workmatic worker stopped gracefully.');
     }
   }

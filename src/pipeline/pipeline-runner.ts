@@ -7,6 +7,7 @@ import { DeployraError } from '../errors/deployra-error.js';
 import { GitClient } from '../git/git-client.js';
 import type { DeploymentJobPayload } from '../jobs/workmatic-engine.js';
 import { logger } from '../logging/logger.js';
+import { NotificationService } from '../notifications/notification-service.js';
 import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
 import { parseCommandString, UnitupAdapter } from '../runtime/unitup-adapter.js';
 import { safeExec } from '../security/exec.js';
@@ -19,6 +20,7 @@ export class DeploymentPipelineRunner {
   private unitupAdapter = new UnitupAdapter();
   private readyAdapter = new ReadyCheckerAdapter();
   private rollbackManager = new RollbackManager();
+  private notificationService = new NotificationService();
   private projectRepo = new ProjectRepository();
   private deploymentRepo = new DeploymentRepository();
   private stateRepo = new StateRepository();
@@ -55,7 +57,8 @@ export class DeploymentPipelineRunner {
   }
 
   public async runDeployment(payload: DeploymentJobPayload): Promise<void> {
-    const { deploymentId, projectName, targetSha, previousSha } = payload;
+    const { deploymentId, projectName, previousSha } = payload;
+    let targetSha = payload.targetSha;
     const project = this.projectRepo.getProject(projectName);
 
     if (!project) {
@@ -75,7 +78,16 @@ export class DeploymentPipelineRunner {
 
     let config = project.config;
     const isIsolated = config.deploy.strategy === 'isolated';
-    const workingDir = isIsolated ? config.deploy.workspacePath : project.path;
+    const isRelease = config.deploy.strategy === 'release';
+    const releaseRoot = config.deploy.workspacePath;
+    const releasesDir = path.join(releaseRoot, 'releases');
+    const releaseDir = path.join(releasesDir, deploymentId);
+    const currentLink = path.join(releaseRoot, 'current');
+    const workingDir = isRelease
+      ? releaseDir
+      : isIsolated
+        ? config.deploy.workspacePath
+        : project.path;
     const isDryRun = Boolean(payload.dryRun);
     let lockAcquired = false;
 
@@ -115,6 +127,7 @@ export class DeploymentPipelineRunner {
           project.path,
           config,
           isIsolated,
+          isRelease,
           isDryRun,
         );
       });
@@ -145,7 +158,9 @@ export class DeploymentPipelineRunner {
           config.source.remote,
           config.source.branch,
         );
-        if (!resolvedHead && !targetSha) {
+        if (resolvedHead) {
+          targetSha = resolvedHead;
+        } else if (!targetSha) {
           throw new DeployraError(
             `Target SHA could not be resolved for branch '${config.source.branch}'`,
           );
@@ -174,7 +189,7 @@ export class DeploymentPipelineRunner {
         }
       });
 
-      if (config.deploy.service.stopBeforeBuild && !isDryRun) {
+      if (config.deploy.service.stopBeforeBuild && !isDryRun && !isRelease) {
         logger.info(`Stopping service '${config.deploy.service.name}' before build steps...`);
         try {
           await this.unitupAdapter.stop(config.deploy.service.name);
@@ -191,16 +206,52 @@ export class DeploymentPipelineRunner {
         project.path,
         config,
         isIsolated,
+        isRelease,
         isDryRun,
         abortController.signal,
       );
+
+      // Step 7.5: activate-release (only for strategy === 'release')
+      if (isRelease) {
+        await this.runStep(deploymentId, 'activate-release', async () => {
+          if (abortController.signal.aborted) {
+            throw new DeployraError('Deployment was aborted before activate-release');
+          }
+          if (isDryRun) {
+            logger.info(`[DRY-RUN] Would atomically symlink '${currentLink}' -> '${releaseDir}'`, {
+              project: projectName,
+              deploymentId,
+            });
+            return;
+          }
+
+          const tmpLink = path.join(releaseRoot, `current.tmp.${deploymentId}`);
+          try {
+            if (fs.existsSync(tmpLink) || fs.lstatSync(tmpLink).isSymbolicLink()) {
+              fs.unlinkSync(tmpLink);
+            }
+          } catch {
+            // ignore if not exists
+          }
+
+          fs.symlinkSync(releaseDir, tmpLink, 'dir');
+          fs.renameSync(tmpLink, currentLink);
+
+          logger.info(`Activated release '${deploymentId}' at '${currentLink}'`, {
+            project: projectName,
+            deploymentId,
+            releaseDir,
+          });
+        });
+      }
 
       // Step 8: service-action
       await this.runStep(deploymentId, 'service-action', async () => {
         if (abortController.signal.aborted) {
           throw new DeployraError('Deployment was aborted before service-action');
         }
-        await this.performServiceAction(project.path, config, isDryRun);
+        const serviceCwd = isRelease ? currentLink : project.path;
+        await this.performServiceAction(serviceCwd, config, isDryRun);
       });
 
       // Step 9: ready-check
@@ -226,6 +277,66 @@ export class DeploymentPipelineRunner {
         }
       });
 
+      // Step 9.5: cleanup-releases (only for strategy === 'release')
+      if (isRelease) {
+        await this.runStep(deploymentId, 'cleanup-releases', async () => {
+          if (abortController.signal.aborted) {
+            return;
+          }
+          if (isDryRun) {
+            logger.info(
+              `[DRY-RUN] Would prune old releases keeping last ${config.deploy.releasesToKeep}`,
+              {
+                project: projectName,
+                deploymentId,
+              },
+            );
+            return;
+          }
+
+          const releasesToKeep = Math.max(1, config.deploy.releasesToKeep ?? 5);
+          if (!fs.existsSync(releasesDir)) return;
+
+          const entries = fs
+            .readdirSync(releasesDir, { withFileTypes: true })
+            .filter((d) => d.isDirectory())
+            .map((d) => {
+              const fullPath = path.join(releasesDir, d.name);
+              return {
+                name: d.name,
+                path: fullPath,
+                mtime: fs.statSync(fullPath).mtimeMs,
+              };
+            })
+            .sort((a, b) => b.mtime - a.mtime);
+
+          let activeTarget: string | null = null;
+          try {
+            if (fs.existsSync(currentLink)) {
+              activeTarget = fs.realpathSync(currentLink);
+            }
+          } catch {
+            // ignore
+          }
+
+          const releasesToRemove = entries
+            .slice(releasesToKeep)
+            .filter((e) => e.path !== activeTarget);
+
+          for (const rel of releasesToRemove) {
+            try {
+              fs.rmSync(rel.path, { recursive: true, force: true });
+              logger.info(`Pruned old release directory: ${rel.name}`, {
+                project: projectName,
+                release: rel.name,
+              });
+            } catch (rmErr: any) {
+              logger.warn(`Failed to prune release directory ${rel.name}: ${rmErr.message}`);
+            }
+          }
+        });
+      }
+
       // Step 10: complete
       await this.runStep(deploymentId, 'complete', async () => {
         if (abortController.signal.aborted) {
@@ -244,6 +355,19 @@ export class DeploymentPipelineRunner {
           `${isDryRun ? '[DRY-RUN] ' : ''}Deployment #${deploymentId} successfully completed for project '${projectName}'!`,
           { project: projectName, deploymentId, dryRun: isDryRun },
         );
+
+        const depRecord = this.deploymentRepo.getDeployment(deploymentId);
+        const durationMs = depRecord?.startedAt ? Date.now() - depRecord.startedAt : undefined;
+        await this.notificationService.sendDeploymentNotification(config, {
+          projectName,
+          deploymentId,
+          status: 'success',
+          targetSha: targetSha || 'unknown',
+          previousSha,
+          durationMs,
+          triggerType: payload.triggerType,
+          dryRun: isDryRun,
+        });
       });
     } catch (err: any) {
       const currentDep = this.deploymentRepo.getDeployment(deploymentId);
@@ -297,6 +421,7 @@ export class DeploymentPipelineRunner {
     projectPath: string,
     config: NormalizedDeployraConfig,
     isIsolated: boolean,
+    isRelease = false,
     isDryRun = false,
   ): Promise<void> {
     if (isDryRun) {
@@ -305,7 +430,7 @@ export class DeploymentPipelineRunner {
       );
       return;
     }
-    if (isIsolated) {
+    if (isIsolated || isRelease) {
       if (!fs.existsSync(workingDir)) {
         fs.mkdirSync(workingDir, { recursive: true });
       }
@@ -346,6 +471,7 @@ export class DeploymentPipelineRunner {
     projectPath: string,
     config: NormalizedDeployraConfig,
     isIsolated: boolean,
+    isRelease = false,
     isDryRun = false,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -356,7 +482,7 @@ export class DeploymentPipelineRunner {
             throw new DeployraError(`Deployment was aborted before step '${stepName}'`);
           }
 
-          if (stepName === 'install' && !isDryRun) {
+          if (stepName === 'install' && !isDryRun && !isRelease) {
             // Stop service before install to release file handles on node_modules
             try {
               await this.unitupAdapter.stop(config.deploy.service.name);
@@ -365,11 +491,12 @@ export class DeploymentPipelineRunner {
             }
           }
 
+          const stepOutputs: string[] = [];
           for (const cmdStr of cmdList) {
             if (signal?.aborted) {
               throw new DeployraError(`Deployment was aborted before command: '${cmdStr}'`);
             }
-            await this.executeCommandWithRetry(
+            const cmdOut = await this.executeCommandWithRetry(
               cmdStr,
               workingDir,
               config.deploy.retry,
@@ -377,6 +504,9 @@ export class DeploymentPipelineRunner {
               config.deploy.timeoutMs,
               signal,
             );
+            if (cmdOut) {
+              stepOutputs.push(`$ ${cmdStr}\n${cmdOut}`);
+            }
           }
 
           if (stepName === 'build' && isIsolated) {
@@ -393,6 +523,8 @@ export class DeploymentPipelineRunner {
               await this.syncIsolatedWorkspace(workingDir, projectPath);
             }
           }
+
+          return stepOutputs.join('\n\n');
         });
       }
     }
@@ -448,31 +580,68 @@ export class DeploymentPipelineRunner {
 
     this.deploymentRepo.updateStatus(deploymentId, 'failed', err.message);
 
-    // Trigger rollback if previous successful SHA exists, lock was acquired, and rollback enabled
-    if (lockAcquired && config.deploy.rollback.enabled && prevSha && prevSha !== targetSha) {
+    // Trigger rollback if previous successful SHA exists or if release strategy is active, lock was acquired, and rollback enabled
+    const canRollback =
+      lockAcquired &&
+      config.deploy.rollback.enabled &&
+      ((prevSha && prevSha !== targetSha) || config.deploy.strategy === 'release');
+
+    const depRecord = this.deploymentRepo.getDeployment(deploymentId);
+    const durationMs = depRecord?.startedAt ? Date.now() - depRecord.startedAt : undefined;
+
+    if (canRollback) {
       try {
         this.deploymentRepo.updateStatus(deploymentId, 'rolling_back');
         await this.rollbackManager.rollback({
           projectName,
           projectPath: config.project.path,
           previousSuccessfulSha: prevSha,
+          deploymentId,
           config,
         });
         this.deploymentRepo.updateStatus(deploymentId, 'rolled_back');
+        await this.notificationService.sendDeploymentNotification(config, {
+          projectName,
+          deploymentId,
+          status: 'rolled_back',
+          targetSha: targetSha || 'unknown',
+          previousSha: prevSha,
+          durationMs,
+          error: err.message,
+        });
       } catch (rollbackErr: any) {
         logger.error(`Rollback failed for deployment #${deploymentId}: ${rollbackErr.message}`, {
           project: projectName,
           deploymentId,
         });
         this.deploymentRepo.updateStatus(deploymentId, 'rollback_failed', rollbackErr.message);
+        await this.notificationService.sendDeploymentNotification(config, {
+          projectName,
+          deploymentId,
+          status: 'failed',
+          targetSha: targetSha || 'unknown',
+          previousSha: prevSha,
+          durationMs,
+          error: `Deployment and rollback failed: ${err.message} (Rollback: ${rollbackErr.message})`,
+        });
       }
+    } else {
+      await this.notificationService.sendDeploymentNotification(config, {
+        projectName,
+        deploymentId,
+        status: 'failed',
+        targetSha: targetSha || 'unknown',
+        previousSha: prevSha,
+        durationMs,
+        error: err.message,
+      });
     }
   }
 
   private async runStep(
     deploymentId: string,
     stepName: string,
-    action: () => Promise<void>,
+    action: () => Promise<unknown>,
   ): Promise<void> {
     const startTime = Date.now();
     this.deploymentRepo.updateStep(deploymentId, stepName, {
@@ -486,21 +655,24 @@ export class DeploymentPipelineRunner {
     }
 
     try {
-      await action();
+      const stepOutput = await action();
       const duration = Date.now() - startTime;
       this.deploymentRepo.updateStep(deploymentId, stepName, {
         status: 'success',
         completedAt: Date.now(),
         duration,
         exitCode: 0,
+        output: typeof stepOutput === 'string' ? stepOutput : undefined,
       });
     } catch (err: any) {
       const duration = Date.now() - startTime;
+      const errorOutput = err.stderr || (typeof err.output === 'string' ? err.output : undefined);
       this.deploymentRepo.updateStep(deploymentId, stepName, {
         status: 'failed',
         completedAt: Date.now(),
         duration,
         exitCode: err.exitCode ?? 1,
+        output: errorOutput,
         error: err.message,
       });
       throw err;
@@ -514,10 +686,10 @@ export class DeploymentPipelineRunner {
     isDryRun = false,
     timeoutMs?: number,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<string> {
     if (isDryRun) {
       logger.info(`[DRY-RUN] Would execute command: '${cmdStr}' in working directory '${cwd}'`);
-      return;
+      return `[DRY-RUN] Simulated execution: ${cmdStr}`;
     }
     const parsed = parseCommandString(cmdStr);
     const cmd = parsed.command;
@@ -530,7 +702,7 @@ export class DeploymentPipelineRunner {
         throw new DeployraError(`Command '${cmdStr}' aborted`);
       }
       try {
-        await safeExec(cmd, args, {
+        const res = await safeExec(cmd, args, {
           cwd,
           timeoutMs,
           signal,
@@ -539,7 +711,7 @@ export class DeploymentPipelineRunner {
             FORCE_COLOR: '0',
           },
         });
-        return;
+        return [res.stdout, res.stderr].filter(Boolean).join('\n').trim();
       } catch (err: any) {
         lastErr = err;
 

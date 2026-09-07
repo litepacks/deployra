@@ -87,6 +87,53 @@ const individualCheckSchema = z.discriminatedUnion('type', [
   fileCheckSchema,
 ]);
 
+const notificationEventSchema = z.enum(['success', 'failure', 'rollback']);
+
+export const notificationChannelSchema = z.object({
+  type: z.enum(['slack', 'discord', 'telegram', 'webhook']),
+  url: z.string().optional(),
+  token: z.string().optional(),
+  chatId: z.string().optional(),
+  events: z.array(notificationEventSchema).default(['success', 'failure', 'rollback']),
+  headers: z.record(z.string(), z.string()).optional(),
+});
+
+export const notificationsObjectSchema = z.object({
+  channels: z.array(notificationChannelSchema).optional(),
+  events: z.array(notificationEventSchema).optional(),
+  slack: z
+    .object({
+      url: z.string(),
+      events: z.array(notificationEventSchema).optional(),
+    })
+    .optional(),
+  discord: z
+    .object({
+      url: z.string(),
+      events: z.array(notificationEventSchema).optional(),
+    })
+    .optional(),
+  telegram: z
+    .object({
+      token: z.string(),
+      chatId: z.string(),
+      events: z.array(notificationEventSchema).optional(),
+    })
+    .optional(),
+  webhook: z
+    .object({
+      url: z.string(),
+      headers: z.record(z.string(), z.string()).optional(),
+      events: z.array(notificationEventSchema).optional(),
+    })
+    .optional(),
+});
+
+export const notificationsConfigSchema = z.union([
+  z.array(notificationChannelSchema),
+  notificationsObjectSchema,
+]);
+
 export const deployraConfigSchema = z.object({
   project: z.object({
     name: z.string().min(1, 'project.name is required'),
@@ -105,11 +152,12 @@ export const deployraConfigSchema = z.object({
     .default({ interval: '30s' }),
   deploy: z
     .object({
-      strategy: z.enum(['in-place', 'isolated']).default('in-place'),
+      strategy: z.enum(['in-place', 'isolated', 'release']).default('in-place'),
       workspacePath: z.string().optional(),
       concurrency: z.number().int().min(1).default(1),
       queueMode: z.enum(['latest', 'fifo', 'reject']).default('latest'),
       dirtyWorkspace: z.enum(['reject', 'reset', 'stash']).default('reject'),
+      releasesToKeep: z.number().int().min(1).default(5),
       timeout: durationSchema.default('10m'),
       retry: z
         .object({
@@ -150,6 +198,14 @@ export const deployraConfigSchema = z.object({
         .default({ enabled: true, on: ['build-failure', 'service-failure', 'ready-failure'] }),
     })
     .default({}),
+  webhook: z
+    .object({
+      enabled: z.boolean().default(true),
+      secret: z.string().optional(),
+      branch: z.string().optional(),
+    })
+    .optional(),
+  notifications: notificationsConfigSchema.optional(),
 });
 
 export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeployraConfig {
@@ -212,6 +268,84 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
   );
   const resolvedProjectPath = assertSafePath(path.resolve(data.project.path));
 
+  let webhookConfig: NormalizedDeployraConfig['webhook'];
+  if (data.webhook) {
+    let secret = data.webhook.secret;
+    if (secret?.startsWith('$')) {
+      secret = process.env[secret.slice(1)];
+    }
+    webhookConfig = {
+      enabled: data.webhook.enabled,
+      secret,
+      branch: data.webhook.branch,
+    };
+  }
+
+  const normalizedNotifications: NormalizedDeployraConfig['notifications'] = [];
+  if (data.notifications) {
+    const resolveEnv = (val?: string) =>
+      val?.startsWith('$') ? process.env[val.slice(1)] || val : val;
+
+    if (Array.isArray(data.notifications)) {
+      for (const ch of data.notifications) {
+        normalizedNotifications.push({
+          type: ch.type,
+          url: resolveEnv(ch.url),
+          token: resolveEnv(ch.token),
+          chatId: resolveEnv(ch.chatId),
+          events: ch.events,
+          headers: ch.headers,
+        });
+      }
+    } else {
+      const obj = data.notifications;
+      const defaultEvents = obj.events || ['success', 'failure', 'rollback'];
+
+      if (Array.isArray(obj.channels)) {
+        for (const ch of obj.channels) {
+          normalizedNotifications.push({
+            type: ch.type,
+            url: resolveEnv(ch.url),
+            token: resolveEnv(ch.token),
+            chatId: resolveEnv(ch.chatId),
+            events: ch.events || defaultEvents,
+            headers: ch.headers,
+          });
+        }
+      }
+      if (obj.slack) {
+        normalizedNotifications.push({
+          type: 'slack',
+          url: resolveEnv(obj.slack.url),
+          events: obj.slack.events || defaultEvents,
+        });
+      }
+      if (obj.discord) {
+        normalizedNotifications.push({
+          type: 'discord',
+          url: resolveEnv(obj.discord.url),
+          events: obj.discord.events || defaultEvents,
+        });
+      }
+      if (obj.telegram) {
+        normalizedNotifications.push({
+          type: 'telegram',
+          token: resolveEnv(obj.telegram.token),
+          chatId: resolveEnv(obj.telegram.chatId),
+          events: obj.telegram.events || defaultEvents,
+        });
+      }
+      if (obj.webhook) {
+        normalizedNotifications.push({
+          type: 'webhook',
+          url: resolveEnv(obj.webhook.url),
+          headers: obj.webhook.headers,
+          events: obj.webhook.events || defaultEvents,
+        });
+      }
+    }
+  }
+
   return {
     project: {
       name: projectName,
@@ -224,12 +358,15 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
     watch: {
       intervalMs: watchIntervalMs,
     },
+    webhook: webhookConfig,
+    notifications: normalizedNotifications,
     deploy: {
       strategy: data.deploy.strategy,
       workspacePath: resolvedWorkspacePath,
       concurrency: data.deploy.concurrency,
       queueMode: data.deploy.queueMode,
       dirtyWorkspace: data.deploy.dirtyWorkspace,
+      releasesToKeep: data.deploy.releasesToKeep,
       timeoutMs: deployTimeoutMs,
       retry: {
         attempts: data.deploy.retry.attempts,

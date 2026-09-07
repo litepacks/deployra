@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import type { NormalizedDeployraConfig } from '../config/types.js';
 import { RollbackError } from '../errors/deployra-error.js';
 import { GitClient } from '../git/git-client.js';
@@ -15,11 +16,12 @@ export class RollbackManager {
   public async rollback(data: {
     projectName: string;
     projectPath: string;
-    previousSuccessfulSha: string;
+    previousSuccessfulSha?: string;
+    deploymentId?: string;
     config: NormalizedDeployraConfig;
   }): Promise<void> {
     logger.warn(
-      `Initiating automated rollback for project '${data.projectName}' to SHA ${data.previousSuccessfulSha}`,
+      `Initiating automated rollback for project '${data.projectName}'${data.previousSuccessfulSha ? ` to SHA ${data.previousSuccessfulSha}` : ''}`,
       {
         project: data.projectName,
       },
@@ -27,6 +29,83 @@ export class RollbackManager {
 
     const isIsolated = data.config.deploy.strategy === 'isolated';
     const workingDir = isIsolated ? data.config.deploy.workspacePath : data.projectPath;
+
+    if (data.config.deploy.strategy === 'release') {
+      const releaseRoot = data.config.deploy.workspacePath;
+      const releasesDir = path.join(releaseRoot, 'releases');
+      const currentLink = path.join(releaseRoot, 'current');
+
+      try {
+        if (fs.existsSync(releasesDir)) {
+          const entries = fs
+            .readdirSync(releasesDir, { withFileTypes: true })
+            .filter((d) => d.isDirectory() && (!data.deploymentId || d.name !== data.deploymentId))
+            .map((d) => ({
+              name: d.name,
+              path: path.join(releasesDir, d.name),
+              mtime: fs.statSync(path.join(releasesDir, d.name)).mtimeMs,
+            }))
+            .sort((a, b) => b.mtime - a.mtime);
+
+          let activeTarget: string | null = null;
+          try {
+            if (fs.existsSync(currentLink)) {
+              activeTarget = fs.realpathSync(currentLink);
+            }
+          } catch {
+            // Ignore realpath error
+          }
+
+          const previousRelease = entries[0];
+          if (previousRelease) {
+            if (activeTarget !== previousRelease.path) {
+              const tmpLink = path.join(releaseRoot, 'current.rollback.tmp');
+              try {
+                if (fs.existsSync(tmpLink) || fs.lstatSync(tmpLink).isSymbolicLink()) {
+                  fs.unlinkSync(tmpLink);
+                }
+              } catch {}
+              fs.symlinkSync(previousRelease.path, tmpLink, 'dir');
+              fs.renameSync(tmpLink, currentLink);
+            }
+
+            logger.info(
+              `Rollback ensured 'current' symlink points to release '${previousRelease.name}' for project '${data.projectName}'`,
+              { project: data.projectName, previousRelease: previousRelease.name },
+            );
+
+            if (data.deploymentId) {
+              const failedDir = path.join(releasesDir, data.deploymentId);
+              if (fs.existsSync(failedDir)) {
+                try {
+                  fs.rmSync(failedDir, { recursive: true, force: true });
+                  logger.info(`Removed failed release directory '${data.deploymentId}'`);
+                } catch {}
+              }
+            }
+
+            if (data.config.deploy.service.action !== 'none') {
+              await this.unitupAdapter.restart(data.config.deploy.service.name, {
+                cwd: currentLink,
+              });
+            }
+            if (data.config.deploy.ready.checks.length > 0) {
+              await this.readyAdapter.wait(data.config.deploy.ready);
+            }
+            return;
+          }
+        }
+      } catch (err: any) {
+        logger.error(`Release symlink rollback failed: ${err.message}`, { error: err });
+      }
+    }
+
+    if (!data.previousSuccessfulSha) {
+      logger.warn(
+        `Rollback skipped for project '${data.projectName}': No previous successful SHA found.`,
+      );
+      return;
+    }
 
     try {
       // 1. Reset repository to previous successful SHA

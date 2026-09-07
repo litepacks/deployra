@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import type { DeployStrategy } from '../config/types.js';
 import { getDatabase } from './database.js';
 
 export type DeploymentStatus =
@@ -20,6 +21,7 @@ export interface DeploymentStep {
   completedAt?: number;
   duration?: number;
   exitCode?: number;
+  output?: string;
   error?: string;
 }
 
@@ -39,7 +41,10 @@ export interface DeploymentRecord {
   error?: string;
 }
 
-export function computeDeploymentSteps(configCommands?: Record<string, string[]>): string[] {
+export function computeDeploymentSteps(
+  configCommands?: Record<string, string[]>,
+  strategy?: DeployStrategy,
+): string[] {
   const basePreSteps = [
     'acquire-lock',
     'validate-repository',
@@ -47,7 +52,17 @@ export function computeDeploymentSteps(configCommands?: Record<string, string[]>
     'resolve-target',
     'prepare',
   ];
-  const basePostSteps = ['service-action', 'ready-check', 'complete', 'release-lock'];
+  const basePostSteps =
+    strategy === 'release'
+      ? [
+          'activate-release',
+          'service-action',
+          'ready-check',
+          'cleanup-releases',
+          'complete',
+          'release-lock',
+        ]
+      : ['service-action', 'ready-check', 'complete', 'release-lock'];
 
   if (!configCommands) {
     return [...basePreSteps, 'install', 'build', ...basePostSteps];
@@ -141,11 +156,20 @@ export class DeploymentRepository {
       completedAt?: number;
       duration?: number;
       exitCode?: number;
+      output?: string;
       error?: string;
     },
   ): void {
     const db = getDatabase();
     const stepId = `${deploymentId}_${stepName}`;
+
+    const exists = db.prepare('SELECT id FROM deployment_steps WHERE id = ?').get(stepId);
+    if (!exists) {
+      db.prepare(`
+        INSERT INTO deployment_steps (id, deployment_id, step_name, status)
+        VALUES (?, ?, ?, 'pending')
+      `).run(stepId, deploymentId, stepName);
+    }
 
     db.prepare(`
       UPDATE deployment_steps
@@ -154,6 +178,7 @@ export class DeploymentRepository {
           completed_at = COALESCE(?, completed_at),
           duration = COALESCE(?, duration),
           exit_code = COALESCE(?, exit_code),
+          output = COALESCE(?, output),
           error = ?
       WHERE id = ?
     `).run(
@@ -162,6 +187,7 @@ export class DeploymentRepository {
       update.completedAt || null,
       update.duration || null,
       update.exitCode !== undefined ? update.exitCode : null,
+      update.output || null,
       update.error || null,
       stepId,
     );
@@ -193,6 +219,7 @@ export class DeploymentRepository {
       completedAt: s.completed_at || undefined,
       duration: s.duration || undefined,
       exitCode: s.exit_code !== null ? s.exit_code : undefined,
+      output: s.output || undefined,
       error: s.error || undefined,
     }));
 
@@ -241,6 +268,7 @@ export class DeploymentRepository {
         completedAt: s.completed_at || undefined,
         duration: s.duration || undefined,
         exitCode: s.exit_code !== null ? s.exit_code : undefined,
+        output: s.output || undefined,
         error: s.error || undefined,
       });
     }

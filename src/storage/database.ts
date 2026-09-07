@@ -85,6 +85,7 @@ function initDatabaseSchema(db: SQLiteDatabase): void {
       completed_at INTEGER,
       duration INTEGER,
       exit_code INTEGER,
+      output TEXT,
       error TEXT,
       FOREIGN KEY(deployment_id) REFERENCES deployments(id) ON DELETE CASCADE
     );
@@ -114,6 +115,12 @@ function initDatabaseSchema(db: SQLiteDatabase): void {
 
   try {
     db.exec(`ALTER TABLE deployments ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 0;`);
+  } catch {
+    // Column already exists
+  }
+
+  try {
+    db.exec(`ALTER TABLE deployment_steps ADD COLUMN output TEXT;`);
   } catch {
     // Column already exists
   }

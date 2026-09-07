@@ -11,6 +11,7 @@ import { historyCommand } from './commands/history.js';
 import { initCommand } from './commands/init.js';
 import { listCommand } from './commands/list.js';
 import { logsCommand } from './commands/logs.js';
+import { notifyTestCommand } from './commands/notify-test.js';
 import { removeCommand } from './commands/remove.js';
 import { serviceCommand } from './commands/service.js';
 import { statsCommand } from './commands/stats.js';
@@ -82,6 +83,14 @@ program
   .command('watch [projectName]')
   .description('Start long-running deployment watcher daemon')
   .option('-d, --dry-run', 'Run daemon in simulation mode without executing real commands')
+  .option(
+    '-c, --concurrency <number>',
+    'Maximum number of concurrent project deployments (default: 4)',
+  )
+  .option(
+    '-p, --webhook-port <number>',
+    'Port to listen on for incoming Git webhooks (default: 3939)',
+  )
   .action(async (projectName, options) => {
     await watchCommand(projectName, options);
   });
@@ -99,6 +108,10 @@ program
   .option(
     '-d, --dry-run',
     'Simulate deployment pipeline without executing shell or service commands',
+  )
+  .option(
+    '-i, --inline',
+    'Run deployment pipeline directly in the current process (ideal for CI/CD or testing)',
   )
   .action(async (projectName, options) => {
     await deployCommand(projectName, options);
@@ -130,6 +143,8 @@ program
   .description('View deployment logs')
   .option('-f, --follow', 'Follow log stream')
   .option('-d, --deployment <id>', 'Deployment ID')
+  .option('-s, --step <name>', 'Filter logs for a specific step')
+  .option('--format <type>', 'Output format (pretty | json | jsonl)', 'pretty')
   .action(async (projectName, options) => {
     await logsCommand(projectName, options);
   });
@@ -140,6 +155,13 @@ program
   .option('-l, --limit <number>', 'Number of past deployments to show', '10')
   .action((projectName, options) => {
     historyCommand(projectName, parseInt(options.limit, 10));
+  });
+
+program
+  .command('notify-test [projectName]')
+  .description('Send a test alert to verify configured notification channels')
+  .action(async (projectName) => {
+    await notifyTestCommand(projectName);
   });
 
 program

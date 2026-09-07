@@ -1,4 +1,4 @@
-export type DeployStrategy = 'in-place' | 'isolated';
+export type DeployStrategy = 'in-place' | 'isolated' | 'release';
 export type QueueMode = 'latest' | 'fifo' | 'reject';
 export type DirtyWorkspaceMode = 'reject' | 'reset' | 'stash';
 export type ServiceAction = 'start' | 'restart' | 'reload' | 'none';
@@ -87,6 +87,7 @@ export interface DeployConfig {
   concurrency?: number; // Default 1
   queueMode?: QueueMode; // Default 'latest'
   dirtyWorkspace?: DirtyWorkspaceMode; // Default 'reject'
+  releasesToKeep?: number; // Default 5
   timeout?: string | number; // Default 10m
   retry?: RetryConfig;
   commands?: DeployCommandsConfig;
@@ -109,11 +110,50 @@ export interface WatchConfig {
   interval?: string | number; // Default '30s'
 }
 
+export interface WebhookConfig {
+  enabled?: boolean;
+  secret?: string;
+  branch?: string;
+}
+
+export type NotificationChannelType = 'slack' | 'discord' | 'telegram' | 'webhook';
+export type NotificationEvent = 'success' | 'failure' | 'rollback';
+
+export interface NotificationChannelConfig {
+  type: NotificationChannelType;
+  url?: string;
+  token?: string;
+  chatId?: string;
+  events?: NotificationEvent[];
+  headers?: Record<string, string>;
+}
+
+export type NotificationsConfig =
+  | NotificationChannelConfig[]
+  | {
+      channels?: NotificationChannelConfig[];
+      slack?: { url: string; events?: NotificationEvent[] };
+      discord?: { url: string; events?: NotificationEvent[] };
+      telegram?: { token: string; chatId: string; events?: NotificationEvent[] };
+      webhook?: { url: string; headers?: Record<string, string>; events?: NotificationEvent[] };
+    };
+
+export interface NormalizedNotificationChannel {
+  type: NotificationChannelType;
+  url?: string;
+  token?: string;
+  chatId?: string;
+  events: NotificationEvent[];
+  headers?: Record<string, string>;
+}
+
 export interface DeployraConfig {
   project: ProjectConfig;
   source?: SourceConfig;
   watch?: WatchConfig;
   deploy?: DeployConfig;
+  webhook?: WebhookConfig;
+  notifications?: NotificationsConfig;
 }
 
 // Normalized internal representation with resolved default values and duration milliseconds
@@ -131,12 +171,19 @@ export interface NormalizedDeployraConfig {
   watch: {
     intervalMs: number;
   };
+  webhook?: {
+    enabled: boolean;
+    secret?: string;
+    branch?: string;
+  };
+  notifications: NormalizedNotificationChannel[];
   deploy: {
     strategy: DeployStrategy;
     workspacePath: string;
     concurrency: number;
     queueMode: QueueMode;
     dirtyWorkspace: DirtyWorkspaceMode;
+    releasesToKeep: number;
     timeoutMs: number;
     retry: {
       attempts: number;
