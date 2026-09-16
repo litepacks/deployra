@@ -31,6 +31,26 @@ export function getCurrentVersion(): string {
 
 export async function fetchLatestVersion(): Promise<string> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanupFns: Array<() => void> = [];
+
+    const done = (err: Error | null, result?: string) => {
+      if (settled) return;
+      settled = true;
+      for (const fn of cleanupFns) {
+        try {
+          fn();
+        } catch {
+          // ignore
+        }
+      }
+      if (err) {
+        reject(err);
+      } else {
+        resolve(result || '');
+      }
+    };
+
     const req = https.get(
       'https://registry.npmjs.org/deployra/latest',
       {
@@ -39,27 +59,51 @@ export async function fetchLatestVersion(): Promise<string> {
       },
       (res) => {
         if (res.statusCode !== 200) {
-          return reject(new Error(`NPM Registry HTTP status ${res.statusCode}`));
+          res.resume();
+          done(new Error(`NPM Registry HTTP status ${res.statusCode}`));
+          return;
         }
+
         let body = '';
-        res.on('data', (chunk) => {
+        const onData = (chunk: string | Buffer) => {
           body += chunk;
-        });
-        res.on('end', () => {
+        };
+        const onEnd = () => {
           try {
             const json = JSON.parse(body);
-            resolve(json.version);
+            done(null, json.version);
           } catch (e: any) {
-            reject(new Error(`Failed to parse npm registry response: ${e.message}`));
+            done(new Error(`Failed to parse npm registry response: ${e.message}`));
           }
+        };
+        const onResError = (err: Error) => {
+          done(err);
+        };
+
+        res.on('data', onData);
+        res.once('end', onEnd);
+        res.once('error', onResError);
+
+        cleanupFns.push(() => {
+          res.off('data', onData);
+          res.off('end', onEnd);
+          res.off('error', onResError);
         });
       },
     );
 
-    req.on('error', (err) => reject(err));
-    req.on('timeout', () => {
+    const onReqError = (err: Error) => done(err);
+    const onReqTimeout = () => {
       req.destroy();
-      reject(new Error('NPM Registry connection timeout'));
+      done(new Error('NPM Registry connection timeout'));
+    };
+
+    req.once('error', onReqError);
+    req.once('timeout', onReqTimeout);
+
+    cleanupFns.push(() => {
+      req.off('error', onReqError);
+      req.off('timeout', onReqTimeout);
     });
   });
 }

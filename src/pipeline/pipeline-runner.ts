@@ -112,7 +112,12 @@ export class DeploymentPipelineRunner {
         while (Date.now() - startWait <= maxWaitMs) {
           lockAcquired = this.stateRepo.acquireLock(projectName, deploymentId);
           if (lockAcquired) break;
-          await new Promise((res) => setTimeout(res, pollIntervalMs));
+          await new Promise<void>((res) => {
+            const timer = setTimeout(() => {
+              clearTimeout(timer);
+              res();
+            }, pollIntervalMs);
+          });
         }
 
         if (!lockAcquired) {
@@ -297,18 +302,18 @@ export class DeploymentPipelineRunner {
           const releasesToKeep = Math.max(1, config.deploy.releasesToKeep ?? 5);
           if (!fs.existsSync(releasesDir)) return;
 
-          const entries = fs
-            .readdirSync(releasesDir, { withFileTypes: true })
-            .filter((d) => d.isDirectory())
-            .map((d) => {
+          const entries: Array<{ name: string; path: string; mtime: number }> = [];
+          for (const d of fs.readdirSync(releasesDir, { withFileTypes: true })) {
+            if (d.isDirectory()) {
               const fullPath = path.join(releasesDir, d.name);
-              return {
+              entries.push({
                 name: d.name,
                 path: fullPath,
                 mtime: fs.statSync(fullPath).mtimeMs,
-              };
-            })
-            .sort((a, b) => b.mtime - a.mtime);
+              });
+            }
+          }
+          entries.sort((a, b) => b.mtime - a.mtime);
 
           let activeTarget: string | null = null;
           try {
@@ -319,19 +324,18 @@ export class DeploymentPipelineRunner {
             // ignore
           }
 
-          const releasesToRemove = entries
-            .slice(releasesToKeep)
-            .filter((e) => e.path !== activeTarget);
-
-          for (const rel of releasesToRemove) {
-            try {
-              fs.rmSync(rel.path, { recursive: true, force: true });
-              logger.info(`Pruned old release directory: ${rel.name}`, {
-                project: projectName,
-                release: rel.name,
-              });
-            } catch (rmErr: any) {
-              logger.warn(`Failed to prune release directory ${rel.name}: ${rmErr.message}`);
+          for (let i = releasesToKeep; i < entries.length; i++) {
+            const rel = entries[i];
+            if (rel && rel.path !== activeTarget) {
+              try {
+                fs.rmSync(rel.path, { recursive: true, force: true });
+                logger.info(`Pruned old release directory: ${rel.name}`, {
+                  project: projectName,
+                  release: rel.name,
+                });
+              } catch (rmErr: any) {
+                logger.warn(`Failed to prune release directory ${rel.name}: ${rmErr.message}`);
+              }
             }
           }
         });
@@ -723,7 +727,12 @@ export class DeploymentPipelineRunner {
           logger.warn(
             `Command '${cmdStr}' failed (attempt ${attempt}/${maxAttempts}). Retrying in ${retryConfig.backoffMs}ms...`,
           );
-          await new Promise((resolve) => setTimeout(resolve, retryConfig.backoffMs));
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+              clearTimeout(timer);
+              resolve();
+            }, retryConfig.backoffMs);
+          });
         }
       }
     }

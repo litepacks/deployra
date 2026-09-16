@@ -68,9 +68,12 @@ export function computeDeploymentSteps(
     return [...basePreSteps, 'install', 'build', ...basePostSteps];
   }
 
-  const activeCommandSteps = Object.entries(configCommands)
-    .filter(([_, cmdList]) => Array.isArray(cmdList) && cmdList.length > 0)
-    .map(([stepName]) => stepName);
+  const activeCommandSteps: string[] = [];
+  for (const [stepName, cmdList] of Object.entries(configCommands)) {
+    if (Array.isArray(cmdList) && cmdList.length > 0) {
+      activeCommandSteps.push(stepName);
+    }
+  }
 
   return [...basePreSteps, ...activeCommandSteps, ...basePostSteps];
 }

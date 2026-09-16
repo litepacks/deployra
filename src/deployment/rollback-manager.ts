@@ -37,15 +37,18 @@ export class RollbackManager {
 
       try {
         if (fs.existsSync(releasesDir)) {
-          const entries = fs
-            .readdirSync(releasesDir, { withFileTypes: true })
-            .filter((d) => d.isDirectory() && (!data.deploymentId || d.name !== data.deploymentId))
-            .map((d) => ({
-              name: d.name,
-              path: path.join(releasesDir, d.name),
-              mtime: fs.statSync(path.join(releasesDir, d.name)).mtimeMs,
-            }))
-            .sort((a, b) => b.mtime - a.mtime);
+          const entries: Array<{ name: string; path: string; mtime: number }> = [];
+          for (const d of fs.readdirSync(releasesDir, { withFileTypes: true })) {
+            if (d.isDirectory() && (!data.deploymentId || d.name !== data.deploymentId)) {
+              const fullPath = path.join(releasesDir, d.name);
+              entries.push({
+                name: d.name,
+                path: fullPath,
+                mtime: fs.statSync(fullPath).mtimeMs,
+              });
+            }
+          }
+          entries.sort((a, b) => b.mtime - a.mtime);
 
           let activeTarget: string | null = null;
           try {

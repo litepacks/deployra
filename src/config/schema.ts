@@ -134,6 +134,14 @@ export const notificationsConfigSchema = z.union([
   notificationsObjectSchema,
 ]);
 
+export const readyCheckConfigSchema = z.object({
+  url: z.string().optional(),
+  timeout: durationSchema.default('45s'),
+  interval: durationSchema.default('2s'),
+  mode: z.enum(['all', 'any', 'sequence']).default('all'),
+  checks: z.array(individualCheckSchema).default([]),
+});
+
 export const deployraConfigSchema = z.object({
   project: z.object({
     name: z.string().min(1, 'project.name is required'),
@@ -179,15 +187,7 @@ export const deployraConfigSchema = z.object({
           restartSec: z.string().optional(),
         })
         .optional(),
-      ready: z
-        .object({
-          url: z.string().optional(),
-          timeout: durationSchema.default('45s'),
-          interval: durationSchema.default('2s'),
-          mode: z.enum(['all', 'any', 'sequence']).default('all'),
-          checks: z.array(individualCheckSchema).default([]),
-        })
-        .optional(),
+      ready: readyCheckConfigSchema.optional(),
       rollback: z
         .object({
           enabled: z.boolean().default(true),
@@ -207,6 +207,131 @@ export const deployraConfigSchema = z.object({
     .optional(),
   notifications: notificationsConfigSchema.optional(),
 });
+
+function normalizeReadyConfig(
+  ready?: z.infer<typeof readyCheckConfigSchema>,
+): NormalizedDeployraConfig['deploy']['ready'] {
+  let readyTimeoutMs = 45000;
+  let readyIntervalMs = 2000;
+  let readyMode: NormalizedDeployraConfig['deploy']['ready']['mode'] = 'all';
+  const checks = ready?.checks ? [...ready.checks] : [];
+
+  if (ready) {
+    readyTimeoutMs = parseDurationMs(ready.timeout);
+    readyIntervalMs = parseDurationMs(ready.interval);
+    readyMode = ready.mode;
+
+    if (ready.url) {
+      const isHttps = ready.url.startsWith('https://');
+      checks.unshift({
+        type: isHttps ? 'https' : 'http',
+        url: ready.url,
+        expect: { status: 200 },
+      });
+    }
+
+    if (readyIntervalMs >= readyTimeoutMs) {
+      throw new ConfigValidationError(
+        `deploy.ready.interval (${ready.interval}) must be shorter than deploy.ready.timeout (${ready.timeout})`,
+      );
+    }
+  }
+
+  return {
+    timeoutMs: readyTimeoutMs,
+    intervalMs: readyIntervalMs,
+    mode: readyMode,
+    checks,
+  };
+}
+
+function normalizeWebhookConfig(webhook?: {
+  enabled: boolean;
+  secret?: string;
+  branch?: string;
+}): NormalizedDeployraConfig['webhook'] {
+  if (!webhook) return undefined;
+  let secret = webhook.secret;
+  if (secret?.startsWith('$')) {
+    secret = process.env[secret.slice(1)];
+  }
+  return {
+    enabled: webhook.enabled,
+    secret,
+    branch: webhook.branch,
+  };
+}
+
+function normalizeNotificationsConfig(
+  notifications?: z.infer<typeof notificationsConfigSchema>,
+): NormalizedDeployraConfig['notifications'] {
+  const result: NormalizedDeployraConfig['notifications'] = [];
+  if (!notifications) return result;
+
+  const resolveEnv = (val?: string) =>
+    val?.startsWith('$') ? process.env[val.slice(1)] || val : val;
+
+  if (Array.isArray(notifications)) {
+    for (const ch of notifications) {
+      result.push({
+        type: ch.type,
+        url: resolveEnv(ch.url),
+        token: resolveEnv(ch.token),
+        chatId: resolveEnv(ch.chatId),
+        events: ch.events,
+        headers: ch.headers,
+      });
+    }
+    return result;
+  }
+
+  const obj = notifications;
+  const defaultEvents = obj.events || ['success', 'failure', 'rollback'];
+
+  if (Array.isArray(obj.channels)) {
+    for (const ch of obj.channels) {
+      result.push({
+        type: ch.type,
+        url: resolveEnv(ch.url),
+        token: resolveEnv(ch.token),
+        chatId: resolveEnv(ch.chatId),
+        events: ch.events || defaultEvents,
+        headers: ch.headers,
+      });
+    }
+  }
+  if (obj.slack) {
+    result.push({
+      type: 'slack',
+      url: resolveEnv(obj.slack.url),
+      events: obj.slack.events || defaultEvents,
+    });
+  }
+  if (obj.discord) {
+    result.push({
+      type: 'discord',
+      url: resolveEnv(obj.discord.url),
+      events: obj.discord.events || defaultEvents,
+    });
+  }
+  if (obj.telegram) {
+    result.push({
+      type: 'telegram',
+      token: resolveEnv(obj.telegram.token),
+      chatId: resolveEnv(obj.telegram.chatId),
+      events: obj.telegram.events || defaultEvents,
+    });
+  }
+  if (obj.webhook) {
+    result.push({
+      type: 'webhook',
+      url: resolveEnv(obj.webhook.url),
+      headers: obj.webhook.headers,
+      events: obj.webhook.events || defaultEvents,
+    });
+  }
+  return result;
+}
 
 export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeployraConfig {
   let normalizedInput = rawConfig;
@@ -233,33 +358,9 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
   const serviceName = sanitizeProjectName(data.deploy.service?.name ?? projectName);
   const serviceAction = data.deploy.service?.action ?? 'restart';
 
-  // Normalize Ready check config
-  let readyTimeoutMs = 45000;
-  let readyIntervalMs = 2000;
-  let readyMode: NormalizedDeployraConfig['deploy']['ready']['mode'] = 'all';
-  const checks = data.deploy.ready?.checks ? [...data.deploy.ready.checks] : [];
-
-  if (data.deploy.ready) {
-    readyTimeoutMs = parseDurationMs(data.deploy.ready.timeout);
-    readyIntervalMs = parseDurationMs(data.deploy.ready.interval);
-    readyMode = data.deploy.ready.mode;
-
-    // Shorthand URL check
-    if (data.deploy.ready.url) {
-      const isHttps = data.deploy.ready.url.startsWith('https://');
-      checks.unshift({
-        type: isHttps ? 'https' : 'http',
-        url: data.deploy.ready.url,
-        expect: { status: 200 },
-      });
-    }
-
-    if (readyIntervalMs >= readyTimeoutMs) {
-      throw new ConfigValidationError(
-        `deploy.ready.interval (${data.deploy.ready.interval}) must be shorter than deploy.ready.timeout (${data.deploy.ready.timeout})`,
-      );
-    }
-  }
+  const readyConfig = normalizeReadyConfig(data.deploy.ready);
+  const webhookConfig = normalizeWebhookConfig(data.webhook);
+  const normalizedNotifications = normalizeNotificationsConfig(data.notifications);
 
   const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp';
   const defaultWorkspacePath = path.join(homeDir, '.deployra/workspaces', projectName);
@@ -267,84 +368,6 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
     data.deploy.workspacePath ? path.resolve(data.deploy.workspacePath) : defaultWorkspacePath,
   );
   const resolvedProjectPath = assertSafePath(path.resolve(data.project.path));
-
-  let webhookConfig: NormalizedDeployraConfig['webhook'];
-  if (data.webhook) {
-    let secret = data.webhook.secret;
-    if (secret?.startsWith('$')) {
-      secret = process.env[secret.slice(1)];
-    }
-    webhookConfig = {
-      enabled: data.webhook.enabled,
-      secret,
-      branch: data.webhook.branch,
-    };
-  }
-
-  const normalizedNotifications: NormalizedDeployraConfig['notifications'] = [];
-  if (data.notifications) {
-    const resolveEnv = (val?: string) =>
-      val?.startsWith('$') ? process.env[val.slice(1)] || val : val;
-
-    if (Array.isArray(data.notifications)) {
-      for (const ch of data.notifications) {
-        normalizedNotifications.push({
-          type: ch.type,
-          url: resolveEnv(ch.url),
-          token: resolveEnv(ch.token),
-          chatId: resolveEnv(ch.chatId),
-          events: ch.events,
-          headers: ch.headers,
-        });
-      }
-    } else {
-      const obj = data.notifications;
-      const defaultEvents = obj.events || ['success', 'failure', 'rollback'];
-
-      if (Array.isArray(obj.channels)) {
-        for (const ch of obj.channels) {
-          normalizedNotifications.push({
-            type: ch.type,
-            url: resolveEnv(ch.url),
-            token: resolveEnv(ch.token),
-            chatId: resolveEnv(ch.chatId),
-            events: ch.events || defaultEvents,
-            headers: ch.headers,
-          });
-        }
-      }
-      if (obj.slack) {
-        normalizedNotifications.push({
-          type: 'slack',
-          url: resolveEnv(obj.slack.url),
-          events: obj.slack.events || defaultEvents,
-        });
-      }
-      if (obj.discord) {
-        normalizedNotifications.push({
-          type: 'discord',
-          url: resolveEnv(obj.discord.url),
-          events: obj.discord.events || defaultEvents,
-        });
-      }
-      if (obj.telegram) {
-        normalizedNotifications.push({
-          type: 'telegram',
-          token: resolveEnv(obj.telegram.token),
-          chatId: resolveEnv(obj.telegram.chatId),
-          events: obj.telegram.events || defaultEvents,
-        });
-      }
-      if (obj.webhook) {
-        normalizedNotifications.push({
-          type: 'webhook',
-          url: resolveEnv(obj.webhook.url),
-          headers: obj.webhook.headers,
-          events: obj.webhook.events || defaultEvents,
-        });
-      }
-    }
-  }
 
   return {
     project: {
@@ -384,12 +407,7 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
         cpuQuota: data.deploy.service?.cpuQuota,
         restartSec: data.deploy.service?.restartSec,
       },
-      ready: {
-        timeoutMs: readyTimeoutMs,
-        intervalMs: readyIntervalMs,
-        mode: readyMode,
-        checks,
-      },
+      ready: readyConfig,
       rollback: {
         enabled: data.deploy.rollback.enabled,
         on: data.deploy.rollback.on,

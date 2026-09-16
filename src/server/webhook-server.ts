@@ -51,12 +51,15 @@ export class WebhookServer {
         });
       });
 
-      this.server.on('error', (err) => {
+      const onError = (err: Error) => {
         logger.error(`Webhook server error: ${err.message}`);
         reject(err);
-      });
+      };
+
+      this.server.once('error', onError);
 
       this.server.listen(this.port, this.host, () => {
+        this.server?.off('error', onError);
         const boundPort = this.getPort()!;
         logger.info(`Deployra Webhook Receiver listening on ${this.host}:${boundPort}`);
         resolve(boundPort);
@@ -68,7 +71,9 @@ export class WebhookServer {
     if (!this.server) return;
 
     return new Promise((resolve) => {
-      this.server!.close(() => {
+      const srv = this.server!;
+      srv.close(() => {
+        srv.removeAllListeners();
         this.server = null;
         logger.info('Deployra Webhook Receiver stopped.');
         resolve();
@@ -277,23 +282,36 @@ export class WebhookServer {
       let data = '';
       let bytesRead = 0;
 
-      req.on('data', (chunk) => {
+      const onData = (chunk: Buffer | string) => {
         bytesRead += chunk.length;
         if (bytesRead > maxBytes) {
+          cleanup();
           req.destroy();
           resolve(null);
           return;
         }
         data += chunk;
-      });
+      };
 
-      req.on('end', () => {
+      const onEnd = () => {
+        cleanup();
         resolve(data);
-      });
+      };
 
-      req.on('error', () => {
+      const onError = () => {
+        cleanup();
         resolve(null);
-      });
+      };
+
+      const cleanup = () => {
+        req.off('data', onData);
+        req.off('end', onEnd);
+        req.off('error', onError);
+      };
+
+      req.on('data', onData);
+      req.once('end', onEnd);
+      req.once('error', onError);
     });
   }
 

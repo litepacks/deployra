@@ -194,6 +194,11 @@ export class DeployraDaemon {
     }
   }
 
+  private signalHandlers: Array<{
+    event: NodeJS.Signals | 'uncaughtException' | 'unhandledRejection';
+    handler: (...args: any[]) => void;
+  }> = [];
+
   public async shutdown(): Promise<void> {
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
@@ -202,6 +207,8 @@ export class DeployraDaemon {
       clearInterval(this.selfRepairTimer);
       this.selfRepairTimer = undefined;
     }
+
+    this.unregisterSignalHandlers();
 
     logger.info('Shutting down Deployra Daemon gracefully...');
 
@@ -227,10 +234,10 @@ export class DeployraDaemon {
       process.exit(0);
     };
 
-    process.on('SIGINT', () => handleShutdown('SIGINT'));
-    process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+    const sigintHandler = () => handleShutdown('SIGINT');
+    const sigtermHandler = () => handleShutdown('SIGTERM');
 
-    process.on('uncaughtException', async (err: Error) => {
+    const uncaughtHandler = async (err: Error) => {
       logger.error(`Uncaught Exception in Deployra Daemon: ${err.message}`, {
         stack: err.stack,
       });
@@ -239,12 +246,35 @@ export class DeployraDaemon {
       } finally {
         process.exit(1);
       }
-    });
+    };
 
-    process.on('unhandledRejection', (reason: any) => {
+    const unhandledRejectionHandler = (reason: any) => {
       logger.error(`Unhandled Rejection in Deployra Daemon: ${reason?.message || reason}`, {
         reason,
       });
-    });
+    };
+
+    process.on('SIGINT', sigintHandler);
+    process.on('SIGTERM', sigtermHandler);
+    process.on('uncaughtException', uncaughtHandler);
+    process.on('unhandledRejection', unhandledRejectionHandler);
+
+    this.signalHandlers = [
+      { event: 'SIGINT', handler: sigintHandler },
+      { event: 'SIGTERM', handler: sigtermHandler },
+      { event: 'uncaughtException', handler: uncaughtHandler },
+      { event: 'unhandledRejection', handler: unhandledRejectionHandler },
+    ];
+  }
+
+  private unregisterSignalHandlers(): void {
+    for (const { event, handler } of this.signalHandlers) {
+      try {
+        process.off(event as any, handler);
+      } catch {
+        // ignore
+      }
+    }
+    this.signalHandlers = [];
   }
 }

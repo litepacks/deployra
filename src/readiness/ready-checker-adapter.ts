@@ -83,31 +83,40 @@ export class ReadyCheckerAdapter {
             const socket = new net.Socket();
             socket.setTimeout(timeoutMs);
 
-            socket.connect(check.port, check.host, () => {
-              const duration = Date.now() - startTime;
+            const cleanup = () => {
+              socket.removeAllListeners();
               socket.destroy();
+            };
+
+            socket.once('connect', () => {
+              const duration = Date.now() - startTime;
+              cleanup();
               resolve({ type: 'tcp', success: true, duration });
             });
 
-            socket.on('error', (err) => {
-              socket.destroy();
+            socket.once('error', (err) => {
+              const duration = Date.now() - startTime;
+              cleanup();
               resolve({
                 type: 'tcp',
                 success: false,
-                duration: Date.now() - startTime,
+                duration,
                 error: `TCP failed to ${check.host}:${check.port} - ${err.message}`,
               });
             });
 
-            socket.on('timeout', () => {
-              socket.destroy();
+            socket.once('timeout', () => {
+              const duration = Date.now() - startTime;
+              cleanup();
               resolve({
                 type: 'tcp',
                 success: false,
-                duration: Date.now() - startTime,
+                duration,
                 error: `TCP connection timeout to ${check.host}:${check.port}`,
               });
             });
+
+            socket.connect(check.port, check.host);
           });
         }
 
@@ -241,7 +250,12 @@ export class ReadyCheckerAdapter {
         }
       }
 
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          clearTimeout(timer);
+          resolve();
+        }, intervalMs);
+      });
     }
 
     const failedChecks = lastCheckResults.filter((c) => !c.success);
