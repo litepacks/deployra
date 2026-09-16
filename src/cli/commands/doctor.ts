@@ -48,13 +48,31 @@ export async function doctorCommand(configPath?: string): Promise<void> {
     report('SQLite database path writable', false, err.message);
   }
 
-  // 3. Systemd / Unitup availability
+  // 3. Systemd / Unitup availability & Linux Linger
   try {
     const unitup = new UnitupAdapter();
     const status = await unitup.status('test-check');
     report('Unitup runtime adapter ready', true, status.subState || 'active');
   } catch (_err: any) {
     report('Unitup runtime adapter ready', true, 'Fallback / simulation mode active');
+  }
+
+  if (process.platform === 'linux') {
+    try {
+      const currentUser = process.env.USER || process.env.LOGNAME || '';
+      const check = await safeExec('loginctl', ['show-user', currentUser, '--property=Linger']);
+      if (check.stdout.includes('Linger=yes')) {
+        report('Linux systemd user lingering active (survives reboot)', true, 'Linger=yes');
+      } else {
+        report(
+          'Linux systemd user lingering active (survives reboot)',
+          false,
+          `Linger=no (Run 'sudo loginctl enable-linger ${currentUser}' to enable 24/7 background operation on boot)`,
+        );
+      }
+    } catch (err: any) {
+      report('Linux systemd user lingering check', false, err.message);
+    }
   }
 
   // 4. Project Config Check (if provided or present)

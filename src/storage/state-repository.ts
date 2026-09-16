@@ -2,7 +2,7 @@ import { sanitizeProjectName } from '../config/schema.js';
 import { getDatabase } from './database.js';
 
 export class StateRepository {
-  public acquireLock(rawProjectName: string, lockedBy: string, timeoutMs = 900000): boolean {
+  public acquireLock(rawProjectName: string, lockedBy: string, timeoutMs = 300000): boolean {
     const projectName = sanitizeProjectName(rawProjectName);
     const db = getDatabase();
     const now = Date.now();
@@ -86,6 +86,37 @@ export class StateRepository {
       lockedBy: row.locked_by,
       lockedAt: row.locked_at,
     };
+  }
+
+  public pruneStaleLocks(activeDeploymentIds?: Set<string>, maxAgeMs = 300000): number {
+    const db = getDatabase();
+    const now = Date.now();
+    const allLocks = db.prepare(`SELECT * FROM project_locks`).all() as any[];
+    let pruned = 0;
+
+    for (const lock of allLocks) {
+      const lockAge = now - (lock.locked_at || 0);
+      const isKnownActive = activeDeploymentIds?.has(lock.locked_by);
+
+      if (isKnownActive) {
+        continue;
+      }
+
+      const dep = db
+        .prepare(`SELECT status FROM deployments WHERE id = ?`)
+        .get(lock.locked_by) as any;
+
+      const isFinished =
+        dep &&
+        ['success', 'failed', 'cancelled', 'rolled_back', 'rollback_failed'].includes(dep.status);
+
+      if (isFinished || lockAge > maxAgeMs) {
+        db.prepare(`DELETE FROM project_locks WHERE project_name = ?`).run(lock.project_name);
+        pruned++;
+      }
+    }
+
+    return pruned;
   }
 
   public clearAllLocks(): void {

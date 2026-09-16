@@ -189,6 +189,7 @@ export class ReadyCheckerAdapter {
 
     let attempts = 0;
     let lastCheckResults: SingleCheckResult[] = [];
+    const checkTimeoutMs = Math.max(intervalMs, 2000);
 
     while (Date.now() - startTime < timeoutMs) {
       attempts++;
@@ -197,7 +198,7 @@ export class ReadyCheckerAdapter {
       if (mode === 'sequence') {
         let sequenceSuccess = true;
         for (const check of checks) {
-          const res = await this.executeCheck(check, intervalMs);
+          const res = await this.executeCheck(check, checkTimeoutMs);
           lastCheckResults.push(res);
           if (!res.success) {
             sequenceSuccess = false;
@@ -214,7 +215,7 @@ export class ReadyCheckerAdapter {
         }
       } else {
         lastCheckResults = await Promise.all(
-          checks.map((check) => this.executeCheck(check, intervalMs)),
+          checks.map((check) => this.executeCheck(check, checkTimeoutMs)),
         );
 
         if (mode === 'all') {

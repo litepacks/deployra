@@ -16,6 +16,7 @@ export class SourceWatcher {
   private timers = new Map<string, NodeJS.Timeout>();
   private errorCounts = new Map<string, number>();
   private checkingProjects = new Set<string>();
+  private lastCheckTimestamps = new Map<string, number>();
 
   private syncTimer?: NodeJS.Timeout;
   private targetProjectName?: string;
@@ -30,7 +31,7 @@ export class SourceWatcher {
     this.isDryRun = dryRun;
     await this.syncProjects();
 
-    // Periodically re-sync registry every 5 seconds to pick up new/removed projects dynamically
+    // Periodically re-sync registry every 5 seconds to pick up new/removed projects dynamically & heal stalled timers
     this.syncTimer = setInterval(() => {
       this.syncProjects().catch((err) => {
         logger.error(`Error auto-syncing projects in watcher: ${err.message}`);
@@ -50,6 +51,7 @@ export class SourceWatcher {
     this.timers.clear();
     this.errorCounts.clear();
     this.checkingProjects.clear();
+    this.lastCheckTimestamps.clear();
   }
 
   public async syncProjects(): Promise<void> {
@@ -58,6 +60,7 @@ export class SourceWatcher {
       : this.projectRepo.getAllProjects();
 
     const currentProjectNames = new Set(allProjects.map((p) => p.name));
+    const now = Date.now();
 
     // Remove watchers for deleted projects
     for (const [name, timer] of Array.from(this.timers.entries())) {
@@ -66,30 +69,60 @@ export class SourceWatcher {
         this.timers.delete(name);
         this.errorCounts.delete(name);
         this.checkingProjects.delete(name);
+        this.lastCheckTimestamps.delete(name);
         logger.info(`Stopped monitoring removed project '${name}'`, { project: name });
       }
     }
 
-    // Add watchers for newly registered projects
+    // Add or repair watchers for registered projects
     let index = 0;
     for (const proj of allProjects) {
-      if (!this.timers.has(proj.name)) {
-        if (isUrlLike(proj.name)) {
+      const existingTimer = this.timers.get(proj.name);
+      const lastCheck = this.lastCheckTimestamps.get(proj.name) || 0;
+      const expectedInterval = proj.config.watch.intervalMs || 10000;
+      const isStalled = lastCheck > 0 && now - lastCheck > Math.max(expectedInterval * 4, 30000);
+
+      if (!existingTimer || isStalled) {
+        if (isStalled) {
           logger.warn(
-            `Project name '${proj.name}' appears to be a Git repository URL. Consider using a clean identifier (e.g. 'my-app') for project.name in deployra.config.yaml.`,
+            `[SELF-REPAIR] Watcher for project '${proj.name}' was stalled (${Math.round((now - lastCheck) / 1000)}s since last check). Reviving timer...`,
+            { project: proj.name },
+          );
+          if (existingTimer) {
+            clearTimeout(existingTimer);
+            this.timers.delete(proj.name);
+          }
+        }
+
+        if (!existingTimer && !isStalled) {
+          if (isUrlLike(proj.name)) {
+            logger.warn(
+              `Project name '${proj.name}' appears to be a Git repository URL. Consider using a clean identifier (e.g. 'my-app') for project.name in deployra.config.yaml.`,
+              { project: proj.name },
+            );
+          }
+          logger.info(
+            `Started monitoring project '${proj.name}' (${proj.remote}/${proj.branch}) every ${proj.config.watch.intervalMs}ms`,
             { project: proj.name },
           );
         }
-        logger.info(
-          `Started monitoring project '${proj.name}' (${proj.remote}/${proj.branch}) every ${proj.config.watch.intervalMs}ms`,
-          { project: proj.name },
-        );
-        // Stagger initial check (e.g. 0ms, 250ms, 500ms...) to avoid thundering herd on startup
-        const initialDelay = index * 250;
+
+        const initialDelay = isStalled ? 0 : index * 250;
         this.scheduleNextCheck(proj.name, 0, initialDelay);
         index++;
       }
     }
+  }
+
+  private countRecentFailedAttempts(projectName: string, targetSha: string): number {
+    const recent = this.deploymentRepo.getDeploymentsByProject(projectName, 10);
+    return recent.filter(
+      (d) =>
+        (d.targetSha === targetSha ||
+          d.targetSha.startsWith(targetSha) ||
+          targetSha.startsWith(d.targetSha)) &&
+        ['failed', 'rolled_back', 'rollback_failed'].includes(d.status),
+    ).length;
   }
 
   public async checkProject(
@@ -112,6 +145,7 @@ export class SourceWatcher {
     }
 
     this.checkingProjects.add(projectName);
+    this.lastCheckTimestamps.set(projectName, Date.now());
 
     try {
       // Refresh config from disk if updated
@@ -151,31 +185,61 @@ export class SourceWatcher {
 
       const activeDeps = this.deploymentRepo.getActiveDeployments(projectName);
 
-      // Prevent re-deploying same commit SHA on polling if unchanged or already active
+      // Deduplication & Self-Repair logic on polling
       if (triggerType === 'poll') {
-        if (isSameSha(remoteSha, proj.lastSeenSha)) {
-          logger.debug(`No change detected for project '${projectName}' (SHA: ${remoteSha})`, {
-            project: projectName,
-          });
-          return null;
-        }
-
-        const latestDep = this.deploymentRepo.getLatestDeployment(projectName);
-        if (latestDep && isSameSha(latestDep.targetSha, remoteSha)) {
-          logger.info(
-            `Latest deployment #${latestDep.id} for project '${projectName}' already targeted commit SHA ${remoteSha} (status: ${latestDep.status}). Skipping duplicate polling trigger.`,
-            { project: projectName, deploymentId: latestDep.id },
-          );
-          this.projectRepo.updateLastSeenSha(projectName, remoteSha);
-          return null;
-        }
-
         const existingSameShaDep = activeDeps.find((dep) => isSameSha(dep.targetSha, remoteSha));
         if (existingSameShaDep) {
           logger.info(
             `Deployment #${existingSameShaDep.id} for project '${projectName}' (target SHA: ${remoteSha}) is already ${existingSameShaDep.status}. Skipping duplicate deployment creation.`,
             { project: projectName, deploymentId: existingSameShaDep.id },
           );
+          return null;
+        }
+
+        const latestDep = this.deploymentRepo.getLatestDeployment(projectName);
+        if (latestDep && isSameSha(latestDep.targetSha, remoteSha)) {
+          if (latestDep.status === 'success') {
+            if (proj.lastSeenSha !== remoteSha) {
+              this.projectRepo.updateLastSeenSha(projectName, remoteSha);
+            }
+            logger.debug(`No change detected for project '${projectName}' (SHA: ${remoteSha})`, {
+              project: projectName,
+            });
+            return null;
+          }
+
+          // If latest deployment failed/rolled back, attempt self-repair retry after cooldown (up to 3 retries)
+          if (
+            ['failed', 'rolled_back', 'rollback_failed', 'cancelled'].includes(latestDep.status)
+          ) {
+            const depCompletedAt = latestDep.completedAt || latestDep.createdAt;
+            const cooldownMs = 60000; // 60s cooldown between retries of failed commit
+            const failedCount = this.countRecentFailedAttempts(projectName, remoteSha);
+
+            if (failedCount >= 3) {
+              // Max auto-retries reached for this failed commit
+              if (proj.lastSeenSha !== remoteSha) {
+                this.projectRepo.updateLastSeenSha(projectName, remoteSha);
+              }
+              return null;
+            }
+
+            if (Date.now() - depCompletedAt < cooldownMs) {
+              return null;
+            }
+
+            logger.warn(
+              `[SELF-REPAIR] Latest deployment #${latestDep.id} for project '${projectName}' (${remoteSha}) was ${latestDep.status}. Auto-retrying deployment (attempt ${failedCount + 1}/3)...`,
+              { project: projectName, targetSha: remoteSha },
+            );
+          }
+        } else if (
+          isSameSha(remoteSha, proj.lastSeenSha) &&
+          isSameSha(remoteSha, proj.lastSuccessfulSha)
+        ) {
+          logger.debug(`No change detected for project '${projectName}' (SHA: ${remoteSha})`, {
+            project: projectName,
+          });
           return null;
         }
       }
@@ -253,8 +317,17 @@ export class SourceWatcher {
   }
 
   private scheduleNextCheck(projectName: string, errorCount = 0, initialDelayMs?: number): void {
-    const proj = this.projectRepo.getProject(projectName);
-    if (!proj) return;
+    let proj: StoredProject | null = null;
+    try {
+      proj = this.projectRepo.getProject(projectName);
+    } catch {
+      // If DB read fails, retry with small delay
+    }
+
+    if (!proj) {
+      this.timers.delete(projectName);
+      return;
+    }
 
     let baseInterval = initialDelayMs !== undefined ? initialDelayMs : proj.config.watch.intervalMs;
 
@@ -263,22 +336,27 @@ export class SourceWatcher {
       baseInterval += Math.floor(Math.random() * 500);
     }
 
-    // Apply exponential backoff with jitter on consecutive errors
+    // Apply exponential backoff with jitter on consecutive errors, capped at 60s max
     if (errorCount > 0) {
-      const backoffMultiplier = Math.min(2 ** errorCount, 16);
-      const jitter = Math.random() * 1000;
-      baseInterval = baseInterval * backoffMultiplier + jitter;
+      const backoffMultiplier = Math.min(2 ** errorCount, 8);
+      const jitter = Math.random() * 500;
+      baseInterval = Math.min(baseInterval * backoffMultiplier + jitter, 60000);
     }
 
     const timer = setTimeout(async () => {
-      let currentErrorCount = this.errorCounts.get(projectName) || 0;
+      this.timers.delete(projectName);
+      let currentErrorCount = 0;
       try {
         await this.checkProject(projectName, 'poll', this.isDryRun);
         currentErrorCount = 0;
       } catch {
-        currentErrorCount = (this.errorCounts.get(projectName) || 0) + 1;
+        currentErrorCount = this.errorCounts.get(projectName) || 1;
       } finally {
-        this.scheduleNextCheck(projectName, currentErrorCount);
+        try {
+          this.scheduleNextCheck(projectName, currentErrorCount);
+        } catch (err: any) {
+          logger.error(`Error scheduling next check for '${projectName}': ${err.message}`);
+        }
       }
     }, baseInterval);
 

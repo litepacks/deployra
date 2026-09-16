@@ -379,6 +379,18 @@ export class DeploymentRepository {
     };
   }
 
+  cleanupUnfinishedJobsOnStartup(): number {
+    const db = getDatabase();
+    const now = Date.now();
+    const stmt = db.prepare(`
+      UPDATE deployments 
+      SET status = 'failed', completed_at = ?, error = 'Daemon restarted during active deployment' 
+      WHERE status IN ('running', 'rolling_back', 'queued')
+    `);
+    const result = stmt.run(now);
+    return result.changes;
+  }
+
   cleanupStaleJobs(maxAgeMs = 15 * 60 * 1000): number {
     const db = getDatabase();
     const cutoff = Date.now() - maxAgeMs;

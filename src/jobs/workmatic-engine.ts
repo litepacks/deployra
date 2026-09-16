@@ -63,6 +63,12 @@ export class WorkmaticEngine {
     this.deploymentRepo = new DeploymentRepository();
   }
 
+  private runningDeployments = new Set<string>();
+
+  public getActiveRunningDeploymentIds(): Set<string> {
+    return new Set(this.runningDeployments);
+  }
+
   public getConcurrency(): number {
     return this.concurrency;
   }
@@ -74,9 +80,11 @@ export class WorkmaticEngine {
   public async startWorker(): Promise<void> {
     if (this.worker) return;
 
-    const cleaned = this.deploymentRepo.cleanupStaleJobs();
+    const cleaned = this.deploymentRepo.cleanupUnfinishedJobsOnStartup();
     if (cleaned > 0) {
-      logger.info(`Cleaned up ${cleaned} stale deployment job(s) from previous process run.`);
+      logger.info(
+        `Cleaned up ${cleaned} stale/interrupted deployment job(s) from previous process run.`,
+      );
     }
 
     this.worker = createWorker({
@@ -88,6 +96,7 @@ export class WorkmaticEngine {
 
     this.worker.process(async (job: Job<DeploymentJobPayload>) => {
       const payload = job.payload;
+      this.runningDeployments.add(payload.deploymentId);
       logger.info(
         `Workmatic processing deployment job for project '${payload.projectName}' (target SHA: ${payload.targetSha})`,
         {
@@ -98,6 +107,7 @@ export class WorkmaticEngine {
 
       if (!this.runner) {
         logger.error('Pipeline runner is not configured in WorkmaticEngine');
+        this.runningDeployments.delete(payload.deploymentId);
         return;
       }
 
@@ -126,14 +136,14 @@ export class WorkmaticEngine {
               error: err,
             },
           );
+        } finally {
+          this.runningDeployments.delete(payload.deploymentId);
         }
       });
     });
 
     this.worker.start();
     logger.info(`Workmatic background job worker started (concurrency: ${this.concurrency}).`);
-
-    await this.recoverStaleJobs();
   }
 
   private async runForProject<T>(projectName: string, fn: () => Promise<T>): Promise<T> {
@@ -194,26 +204,6 @@ export class WorkmaticEngine {
             project: projectName,
             deploymentId: dep.id,
           },
-        );
-      }
-    }
-  }
-
-  private async recoverStaleJobs(): Promise<void> {
-    const unfinished = this.deploymentRepo.getActiveDeployments();
-    for (const dep of unfinished) {
-      if (dep.status === 'running' || dep.status === 'queued') {
-        logger.warn(
-          `Recovering incomplete deployment #${dep.id} (status: ${dep.status}) from startup recovery`,
-          {
-            project: dep.projectName,
-            deploymentId: dep.id,
-          },
-        );
-        this.deploymentRepo.updateStatus(
-          dep.id,
-          'failed',
-          'Daemon restarted during active deployment',
         );
       }
     }
