@@ -142,6 +142,12 @@ export const readyCheckConfigSchema = z.object({
   checks: z.array(individualCheckSchema).default([]),
 });
 
+export const preflightConfigSchema = z.object({
+  diskCheck: z.boolean().default(true),
+  minDiskFreeMb: z.number().int().positive().optional(),
+  maxDiskUsagePercent: z.number().min(1).max(100).default(98),
+});
+
 export const deployraConfigSchema = z.object({
   project: z.object({
     name: z.string().min(1, 'project.name is required'),
@@ -173,6 +179,9 @@ export const deployraConfigSchema = z.object({
           backoff: durationSchema.default('10s'),
         })
         .default({ attempts: 2, backoff: '10s' }),
+      envFile: z.string().optional(),
+      env: z.record(z.string(), z.string()).default({}),
+      preflight: preflightConfigSchema.default({ diskCheck: true, maxDiskUsagePercent: 98 }),
       commands: z.record(z.string(), z.array(z.string())).default({ install: [], build: [] }),
       service: z
         .object({
@@ -203,9 +212,12 @@ export const deployraConfigSchema = z.object({
       enabled: z.boolean().default(true),
       secret: z.string().optional(),
       branch: z.string().optional(),
+      allowedIps: z.array(z.string()).optional(),
+      trustProxy: z.boolean().default(false),
     })
     .optional(),
   notifications: notificationsConfigSchema.optional(),
+  environments: z.record(z.string(), z.any()).optional(),
 });
 
 function normalizeReadyConfig(
@@ -249,6 +261,8 @@ function normalizeWebhookConfig(webhook?: {
   enabled: boolean;
   secret?: string;
   branch?: string;
+  allowedIps?: string[];
+  trustProxy?: boolean;
 }): NormalizedDeployraConfig['webhook'] {
   if (!webhook) return undefined;
   let secret = webhook.secret;
@@ -259,6 +273,8 @@ function normalizeWebhookConfig(webhook?: {
     enabled: webhook.enabled,
     secret,
     branch: webhook.branch,
+    allowedIps: webhook.allowedIps,
+    trustProxy: Boolean(webhook.trustProxy),
   };
 }
 
@@ -369,6 +385,21 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
   );
   const resolvedProjectPath = assertSafePath(path.resolve(data.project.path));
 
+  const normalizedEnv: Record<string, string> = {};
+  if (data.deploy.env) {
+    for (const [key, val] of Object.entries(data.deploy.env)) {
+      if (typeof val === 'string') {
+        if (val.startsWith('$')) {
+          const varName =
+            val.startsWith('${') && val.endsWith('}') ? val.slice(2, -1) : val.slice(1);
+          normalizedEnv[key] = process.env[varName] || '';
+        } else {
+          normalizedEnv[key] = val;
+        }
+      }
+    }
+  }
+
   return {
     project: {
       name: projectName,
@@ -394,6 +425,13 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
       retry: {
         attempts: data.deploy.retry.attempts,
         backoffMs: retryBackoffMs,
+      },
+      envFile: data.deploy.envFile,
+      env: normalizedEnv,
+      preflight: {
+        diskCheck: data.deploy.preflight?.diskCheck ?? true,
+        minDiskFreeMb: data.deploy.preflight?.minDiskFreeMb,
+        maxDiskUsagePercent: data.deploy.preflight?.maxDiskUsagePercent ?? 98,
       },
       commands: data.deploy.commands,
       service: {

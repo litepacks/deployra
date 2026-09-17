@@ -46,6 +46,28 @@ export function resetDatabase(): void {
   getDatabase();
 }
 
+export function vacuumDatabase(): void {
+  const db = getDatabase();
+  try {
+    db.exec('VACUUM;');
+  } catch {
+    // Ignore vacuum error on in-memory DB or active lock
+  }
+}
+
+export function getDatabaseSize(): number {
+  const dbPath = getDatabasePath();
+  if (dbPath === ':memory:') return 0;
+  try {
+    if (fs.existsSync(dbPath)) {
+      return fs.statSync(dbPath).size;
+    }
+  } catch {
+    // ignore
+  }
+  return 0;
+}
+
 function initDatabaseSchema(db: SQLiteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (

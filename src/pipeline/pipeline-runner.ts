@@ -1,15 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { computeConfigHash, loadConfigFromDir } from '../config/parser.js';
+import { computeConfigHash, loadConfigFromDir, parseEnvFile } from '../config/parser.js';
 import type { NormalizedDeployraConfig } from '../config/types.js';
 import { RollbackManager } from '../deployment/rollback-manager.js';
-import { DeployraError } from '../errors/deployra-error.js';
+import { DeployraError, PreflightError } from '../errors/deployra-error.js';
 import { GitClient } from '../git/git-client.js';
 import type { DeploymentJobPayload } from '../jobs/workmatic-engine.js';
 import { logger } from '../logging/logger.js';
+import { registerSecrets } from '../logging/masker.js';
 import { NotificationService } from '../notifications/notification-service.js';
 import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
 import { parseCommandString, UnitupAdapter } from '../runtime/unitup-adapter.js';
+import { checkDiskSpace } from '../security/disk-check.js';
 import { safeExec } from '../security/exec.js';
 import { DeploymentRepository } from '../storage/deployment-repository.js';
 import { ProjectRepository } from '../storage/project-repository.js';
@@ -122,6 +124,23 @@ export class DeploymentPipelineRunner {
 
         if (!lockAcquired) {
           throw new DeployraError(`Could not acquire deployment lock for project '${projectName}'`);
+        }
+
+        // Pre-flight disk space check
+        if (!isDryRun && config.deploy.preflight?.diskCheck) {
+          const diskCheck = checkDiskSpace(workingDir, {
+            minFreeMb: config.deploy.preflight.minDiskFreeMb,
+            maxUsagePercent: config.deploy.preflight.maxDiskUsagePercent,
+          });
+          if (diskCheck.warning) {
+            logger.warn(`[PRE-FLIGHT] ${diskCheck.warning}`, {
+              project: projectName,
+              deploymentId,
+            });
+          }
+          if (!diskCheck.ok && diskCheck.error) {
+            throw new PreflightError(`Pre-flight disk check failed: ${diskCheck.error}`);
+          }
         }
       });
 
@@ -468,6 +487,28 @@ export class DeploymentPipelineRunner {
     }
   }
 
+  private resolveDeploymentEnv(
+    workingDir: string,
+    config: NormalizedDeployraConfig,
+  ): Record<string, string> {
+    let fileEnv: Record<string, string> = {};
+
+    if (config.deploy.envFile) {
+      let envFilePath = config.deploy.envFile;
+      if (!path.isAbsolute(envFilePath)) {
+        const candidateInWorking = path.resolve(workingDir, envFilePath);
+        const candidateInProject = path.resolve(config.project.path, envFilePath);
+        envFilePath = fs.existsSync(candidateInWorking) ? candidateInWorking : candidateInProject;
+      }
+      fileEnv = parseEnvFile(envFilePath);
+    }
+
+    const merged = { ...fileEnv, ...config.deploy.env };
+    // Automatically register all values into secret masker so they are NEVER logged in cleartext
+    registerSecrets(merged);
+    return merged;
+  }
+
   private async executeBuildCommands(
     deploymentId: string,
     projectName: string,
@@ -479,6 +520,8 @@ export class DeploymentPipelineRunner {
     isDryRun = false,
     signal?: AbortSignal,
   ): Promise<void> {
+    const executionEnv = this.resolveDeploymentEnv(workingDir, config);
+
     for (const [stepName, cmdList] of Object.entries(config.deploy.commands)) {
       if (Array.isArray(cmdList) && cmdList.length > 0) {
         await this.runStep(deploymentId, stepName, async () => {
@@ -507,6 +550,7 @@ export class DeploymentPipelineRunner {
               isDryRun,
               config.deploy.timeoutMs,
               signal,
+              executionEnv,
             );
             if (cmdOut) {
               stepOutputs.push(`$ ${cmdStr}\n${cmdOut}`);
@@ -690,6 +734,7 @@ export class DeploymentPipelineRunner {
     isDryRun = false,
     timeoutMs?: number,
     signal?: AbortSignal,
+    env?: Record<string, string>,
   ): Promise<string> {
     if (isDryRun) {
       logger.info(`[DRY-RUN] Would execute command: '${cmdStr}' in working directory '${cwd}'`);
@@ -713,6 +758,7 @@ export class DeploymentPipelineRunner {
           env: {
             CI: 'true',
             FORCE_COLOR: '0',
+            ...env,
           },
         });
         return [res.stdout, res.stderr].filter(Boolean).join('\n').trim();

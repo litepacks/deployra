@@ -5,6 +5,7 @@ import { Command } from 'commander';
 import { addCommand } from './commands/add.js';
 import { cancelCommand } from './commands/cancel.js';
 import { checkCommand } from './commands/check.js';
+import { cleanCommand } from './commands/clean.js';
 import { deployCommand } from './commands/deploy.js';
 import { doctorCommand } from './commands/doctor.js';
 import { historyCommand } from './commands/history.js';
@@ -13,6 +14,7 @@ import { listCommand } from './commands/list.js';
 import { logsCommand } from './commands/logs.js';
 import { notifyTestCommand } from './commands/notify-test.js';
 import { removeCommand } from './commands/remove.js';
+import { rollbackCommand } from './commands/rollback.js';
 import { serviceCommand } from './commands/service.js';
 import { statsCommand } from './commands/stats.js';
 import { statusCommand } from './commands/status.js';
@@ -40,7 +42,7 @@ function getVersion(): string {
   } catch {
     // Fallback if filesystem read fails
   }
-  return '0.2.9';
+  return '0.3.0';
 }
 
 const program = new Command();
@@ -60,8 +62,9 @@ program
 program
   .command('add [configPath]')
   .description('Register a new project configuration')
-  .action(async (configPath) => {
-    await addCommand(configPath);
+  .option('-e, --env <name>', 'Environment profile to apply (e.g. staging, production)')
+  .action(async (configPath, options) => {
+    await addCommand(configPath, options);
   });
 
 program
@@ -105,6 +108,7 @@ program
 program
   .command('deploy [projectName]')
   .description('Trigger a manual deployment for a project')
+  .option('-e, --env <name>', 'Environment profile to deploy (e.g. staging, production)')
   .option(
     '-d, --dry-run',
     'Simulate deployment pipeline without executing shell or service commands',
@@ -118,6 +122,14 @@ program
   });
 
 program
+  .command('rollback [projectName]')
+  .description('Interactive or targeted rollback to a previous successful deployment')
+  .option('-t, --to <deploymentId>', 'Specific deployment ID or target SHA to rollback to')
+  .action(async (projectName, options) => {
+    await rollbackCommand(projectName, options);
+  });
+
+program
   .command('cancel [target]')
   .description('Cancel an active or queued deployment')
   .action((target) => {
@@ -126,9 +138,11 @@ program
 
 program
   .command('status [projectName]')
-  .description('Display status summary for projects')
-  .action((projectName) => {
-    statusCommand(projectName);
+  .description('Display status summary or live TUI dashboard for projects')
+  .option('-w, --watch', 'Live updating dashboard mode')
+  .option('-i, --interval <number>', 'Refresh interval in milliseconds (default: 1500)')
+  .action(async (projectName, options) => {
+    await statusCommand(projectName, options);
   });
 
 program
@@ -155,6 +169,17 @@ program
   .option('-l, --limit <number>', 'Number of past deployments to show', '10')
   .action((projectName, options) => {
     historyCommand(projectName, parseInt(options.limit, 10));
+  });
+
+program
+  .command('clean [projectName]')
+  .alias('prune')
+  .description('Clean up old deployment history and optimize database with retention policy')
+  .option('-k, --keep <number>', 'Number of recent deployments to retain per project', '50')
+  .option('-d, --days <number>', 'Prune deployments older than specified number of days')
+  .option('--no-vacuum', 'Skip SQLite VACUUM optimization')
+  .action(async (projectName, options) => {
+    await cleanCommand(projectName, options);
   });
 
 program

@@ -7,9 +7,9 @@ import { closeDatabase } from '../../storage/database.js';
 import { ProjectRepository } from '../../storage/project-repository.js';
 import { SourceWatcher } from '../../watcher/source-watcher.js';
 
-export async function addCommand(configPath?: string): Promise<void> {
+export async function addCommand(configPath?: string, options?: { env?: string }): Promise<void> {
   try {
-    const config = loadConfig(configPath);
+    const config = loadConfig(configPath, options?.env);
     const repo = new ProjectRepository();
     const saved = repo.saveProject(config);
 

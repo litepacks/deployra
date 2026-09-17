@@ -16,7 +16,7 @@
     "build": "tsup",
     "prepublishOnly": "npm run build",
     "dev": "tsx src/cli/index.ts",
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "test:e2e": "vitest run test/e2e.test.ts",
     "lint": "biome check .",
     "format": "biome format --write ."

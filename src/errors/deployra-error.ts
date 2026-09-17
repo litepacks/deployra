@@ -58,3 +58,10 @@ export class LockError extends DeployraError {
     this.name = 'LockError';
   }
 }
+
+export class PreflightError extends DeployraError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PreflightError';
+  }
+}

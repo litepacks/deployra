@@ -1,10 +1,11 @@
 import chalk from 'chalk';
-import { resolveProjectName } from '../../config/parser.js';
+import { loadConfig, resolveProjectName } from '../../config/parser.js';
 import { WorkmaticEngine } from '../../jobs/workmatic-engine.js';
 import { DeploymentPipelineRunner } from '../../pipeline/pipeline-runner.js';
 import { isDaemonRunning } from '../../runtime/daemon-check.js';
 import { closeDatabase } from '../../storage/database.js';
 import { DeploymentRepository } from '../../storage/deployment-repository.js';
+import { ProjectRepository } from '../../storage/project-repository.js';
 import { SourceWatcher } from '../../watcher/source-watcher.js';
 
 async function logDeploymentMode(
@@ -110,7 +111,7 @@ function reportDeploymentResult(
 
 export async function deployCommand(
   projectName?: string,
-  options?: { dryRun?: boolean; inline?: boolean },
+  options?: { dryRun?: boolean; inline?: boolean; env?: string },
 ): Promise<void> {
   const targetProject = resolveProjectName(projectName);
   if (!targetProject) {
@@ -126,6 +127,20 @@ export async function deployCommand(
   const isInline = Boolean(options?.inline);
   const workmatic = new WorkmaticEngine();
   const depRepo = new DeploymentRepository();
+  const projRepo = new ProjectRepository();
+
+  if (options?.env) {
+    try {
+      const freshConfig = loadConfig(undefined, options.env);
+      if (freshConfig && freshConfig.project.name === targetProject) {
+        projRepo.saveProject(freshConfig);
+        console.log(chalk.cyan(`ℹ Activated environment profile: '${chalk.bold(options.env)}'`));
+      }
+    } catch {
+      // If local file not found or name differs, proceed with existing registered config
+    }
+  }
+
   const watcher = new SourceWatcher(workmatic);
 
   try {

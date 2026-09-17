@@ -405,4 +405,80 @@ export class DeploymentRepository {
     const result = stmt.run(Date.now(), cutoff, cutoff);
     return result.changes;
   }
+
+  public pruneDeployments(options: {
+    projectName?: string;
+    keepCount?: number;
+    maxAgeDays?: number;
+  }): { deletedDeployments: number; deletedSteps: number } {
+    const db = getDatabase();
+    let deletedDeployments = 0;
+    let deletedSteps = 0;
+
+    // Prune by age if maxAgeDays is specified
+    if (options.maxAgeDays !== undefined && options.maxAgeDays > 0) {
+      const cutoff = Date.now() - options.maxAgeDays * 24 * 60 * 60 * 1000;
+      let query = `
+        SELECT id FROM deployments 
+        WHERE created_at < ? AND status NOT IN ('running', 'queued', 'rolling_back')
+      `;
+      const params: any[] = [cutoff];
+      if (options.projectName) {
+        query += ` AND project_name = ?`;
+        params.push(options.projectName);
+      }
+      const toDelete = db.prepare(query).all(...params) as { id: string }[];
+      if (toDelete.length > 0) {
+        const ids = toDelete.map((r) => r.id);
+        const placeholders = ids.map(() => '?').join(',');
+        const stepRes = db
+          .prepare(`DELETE FROM deployment_steps WHERE deployment_id IN (${placeholders})`)
+          .run(...ids);
+        const depRes = db
+          .prepare(`DELETE FROM deployments WHERE id IN (${placeholders})`)
+          .run(...ids);
+        deletedSteps += stepRes.changes;
+        deletedDeployments += depRes.changes;
+      }
+    }
+
+    // Prune by keepCount if keepCount is specified (keep latest N finished deployments per project)
+    if (options.keepCount !== undefined && options.keepCount >= 0) {
+      let projectsQuery = `SELECT DISTINCT project_name FROM deployments`;
+      const pParams: any[] = [];
+      if (options.projectName) {
+        projectsQuery += ` WHERE project_name = ?`;
+        pParams.push(options.projectName);
+      }
+      const projects = db.prepare(projectsQuery).all(...pParams) as { project_name: string }[];
+
+      for (const p of projects) {
+        const rows = db
+          .prepare(
+            `
+          SELECT id FROM deployments 
+          WHERE project_name = ? AND status NOT IN ('running', 'queued', 'rolling_back')
+          ORDER BY created_at DESC, id DESC
+          LIMIT -1 OFFSET ?
+        `,
+          )
+          .all(p.project_name, options.keepCount) as { id: string }[];
+
+        if (rows.length > 0) {
+          const ids = rows.map((r) => r.id);
+          const placeholders = ids.map(() => '?').join(',');
+          const stepRes = db
+            .prepare(`DELETE FROM deployment_steps WHERE deployment_id IN (${placeholders})`)
+            .run(...ids);
+          const depRes = db
+            .prepare(`DELETE FROM deployments WHERE id IN (${placeholders})`)
+            .run(...ids);
+          deletedSteps += stepRes.changes;
+          deletedDeployments += depRes.changes;
+        }
+      }
+    }
+
+    return { deletedDeployments, deletedSteps };
+  }
 }

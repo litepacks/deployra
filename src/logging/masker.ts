@@ -12,9 +12,42 @@ const SECRET_PATTERNS = [
   /https?:\/\/([^:]+):([^@]+)@/g, // URLs with user:password
 ];
 
+const dynamicSecrets = new Set<string>();
+
+export function registerSecret(secret: string): void {
+  if (secret && typeof secret === 'string' && secret.trim().length >= 4) {
+    dynamicSecrets.add(secret.trim());
+  }
+}
+
+export function registerSecrets(secrets: string[] | Record<string, string>): void {
+  if (Array.isArray(secrets)) {
+    for (const s of secrets) {
+      registerSecret(s);
+    }
+  } else if (secrets && typeof secrets === 'object') {
+    for (const val of Object.values(secrets)) {
+      if (typeof val === 'string') {
+        registerSecret(val);
+      }
+    }
+  }
+}
+
+export function clearRegisteredSecrets(): void {
+  dynamicSecrets.clear();
+}
+
 export function maskSecrets(input: string): string {
   if (!input) return input;
   let masked = input;
+
+  // Mask registered dynamic secrets (values from .env or config.env)
+  for (const secret of dynamicSecrets) {
+    if (masked.includes(secret)) {
+      masked = masked.split(secret).join('[REDACTED]');
+    }
+  }
 
   // Mask specific credential patterns
   for (const pattern of SECRET_PATTERNS) {

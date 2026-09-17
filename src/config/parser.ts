@@ -61,11 +61,87 @@ export function findConfigFile(targetPath?: string): string {
   );
 }
 
-export function loadConfig(configPath?: string): NormalizedDeployraConfig {
+function isPlainObject(item: any): boolean {
+  return Boolean(item && typeof item === 'object' && !Array.isArray(item));
+}
+
+export function deepMerge<T extends Record<string, any>>(
+  target: T,
+  source: Record<string, any>,
+): T {
+  const output = { ...target };
+  if (isPlainObject(target) && isPlainObject(source)) {
+    for (const key of Object.keys(source)) {
+      if (isPlainObject(source[key])) {
+        if (!(key in target)) {
+          Object.assign(output, { [key]: source[key] });
+        } else {
+          (output as any)[key] = deepMerge((target as any)[key], source[key]);
+        }
+      } else {
+        Object.assign(output, { [key]: source[key] });
+      }
+    }
+  }
+  return output;
+}
+
+export function parseEnvFile(filePath: string): Record<string, string> {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const result: Record<string, string> = {};
+  const lines = content.split('\n');
+
+  for (let line of lines) {
+    line = line.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('export ')) {
+      line = line.slice(7).trim();
+    }
+    const eqIdx = line.indexOf('=');
+    if (eqIdx === -1) continue;
+
+    const key = line.slice(0, eqIdx).trim();
+    let val = line.slice(eqIdx + 1).trim();
+
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+
+    val = val.replace(
+      /\${([a-zA-Z0-9_]+)(?::-([^}]*))?}|\$([a-zA-Z0-9_]+)/g,
+      (_, p1, defVal, p2) => {
+        const varName = p1 || p2;
+        const envVal = process.env[varName];
+        if (envVal !== undefined && envVal !== '') {
+          return envVal;
+        }
+        if (defVal !== undefined) {
+          return defVal;
+        }
+        return envVal || '';
+      },
+    );
+
+    if (key) {
+      result[key] = val;
+    }
+  }
+
+  return result;
+}
+
+export function loadConfig(
+  configPath?: string,
+  environmentName?: string,
+): NormalizedDeployraConfig {
+  const envName = environmentName || process.env.DEPLOYRA_ENV;
   const filePath = findConfigFile(configPath);
   const content = fs.readFileSync(filePath, 'utf-8');
 
-  let parsed: unknown;
+  let parsed: any;
   try {
     if (filePath.endsWith('.json')) {
       parsed = JSON.parse(content);
@@ -76,16 +152,27 @@ export function loadConfig(configPath?: string): NormalizedDeployraConfig {
     throw new ConfigValidationError(`Failed to parse config file '${filePath}': ${err.message}`);
   }
 
+  if (envName && parsed && isPlainObject(parsed.environments) && parsed.environments[envName]) {
+    const envOverrides = parsed.environments[envName];
+    parsed = deepMerge(parsed, envOverrides);
+  }
+
   const normalized = normalizeAndValidateConfig(parsed);
+  if (envName) {
+    normalized.environment = envName;
+  }
   normalized.configHash = computeConfigHash(normalized);
   return normalized;
 }
 
-export function loadConfigFromDir(dirPath: string): NormalizedDeployraConfig | null {
+export function loadConfigFromDir(
+  dirPath: string,
+  environmentName?: string,
+): NormalizedDeployraConfig | null {
   try {
     const configPath = findConfigFile(dirPath);
     if (configPath) {
-      return loadConfig(configPath);
+      return loadConfig(configPath, environmentName);
     }
   } catch {
     // Config not found or invalid

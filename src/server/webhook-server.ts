@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { logger } from '../logging/logger.js';
+import { extractClientIp, isIpAllowed } from '../security/ip-matcher.js';
 import { ProjectRepository } from '../storage/project-repository.js';
 import type { SourceWatcher } from '../watcher/source-watcher.js';
 
@@ -120,6 +121,23 @@ export class WebhookServer {
         error: `Webhook trigger is disabled for project '${projectName}'`,
       });
       return;
+    }
+
+    // IP whitelist verification
+    const allowedIps = project.config.webhook?.allowedIps;
+    const trustProxy = project.config.webhook?.trustProxy ?? false;
+    const clientIp = extractClientIp(req.socket.remoteAddress, req.headers as any, trustProxy);
+
+    if (allowedIps && allowedIps.length > 0) {
+      if (!isIpAllowed(clientIp, allowedIps)) {
+        logger.warn(
+          `Rejected webhook for project '${projectName}' from unauthorized IP: '${clientIp}'`,
+        );
+        this.sendJson(res, 403, {
+          error: `Access denied: Client IP '${clientIp}' is not allowed to trigger webhooks for project '${projectName}'`,
+        });
+        return;
+      }
     }
 
     // Read payload body with 5MB size limit

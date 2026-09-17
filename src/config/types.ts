@@ -81,6 +81,12 @@ export interface DeployServiceConfig {
   restartSec?: string; // e.g. '5s'
 }
 
+export interface PreflightConfig {
+  diskCheck?: boolean; // Default true
+  minDiskFreeMb?: number; // e.g. 500 (MB)
+  maxDiskUsagePercent?: number; // Default 90 (%)
+}
+
 export interface DeployConfig {
   strategy?: DeployStrategy; // Default 'in-place'
   workspacePath?: string;
@@ -90,6 +96,9 @@ export interface DeployConfig {
   releasesToKeep?: number; // Default 5
   timeout?: string | number; // Default 10m
   retry?: RetryConfig;
+  envFile?: string; // e.g. '.env.production'
+  env?: Record<string, string>; // e.g. { NODE_ENV: 'production' }
+  preflight?: PreflightConfig;
   commands?: DeployCommandsConfig;
   service?: DeployServiceConfig;
   ready?: ReadyConfig;
@@ -114,6 +123,8 @@ export interface WebhookConfig {
   enabled?: boolean;
   secret?: string;
   branch?: string;
+  allowedIps?: string[]; // e.g. ['127.0.0.1', '192.30.252.0/22', '140.82.112.0/20']
+  trustProxy?: boolean; // Whether to trust X-Forwarded-For header
 }
 
 export type NotificationChannelType = 'slack' | 'discord' | 'telegram' | 'webhook';
@@ -154,12 +165,14 @@ export interface DeployraConfig {
   deploy?: DeployConfig;
   webhook?: WebhookConfig;
   notifications?: NotificationsConfig;
+  environments?: Record<string, any>;
 }
 
 // Normalized internal representation with resolved default values and duration milliseconds
 export interface NormalizedDeployraConfig {
   configHash?: string;
   configVersion?: number;
+  environment?: string;
   project: {
     name: string;
     path: string;
@@ -175,6 +188,8 @@ export interface NormalizedDeployraConfig {
     enabled: boolean;
     secret?: string;
     branch?: string;
+    allowedIps?: string[];
+    trustProxy: boolean;
   };
   notifications: NormalizedNotificationChannel[];
   deploy: {
@@ -188,6 +203,13 @@ export interface NormalizedDeployraConfig {
     retry: {
       attempts: number;
       backoffMs: number;
+    };
+    envFile?: string;
+    env: Record<string, string>;
+    preflight: {
+      diskCheck: boolean;
+      minDiskFreeMb?: number;
+      maxDiskUsagePercent: number;
     };
     commands: Record<string, string[]>;
     service: {

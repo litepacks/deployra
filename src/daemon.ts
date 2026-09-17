@@ -140,7 +140,14 @@ export class DeployraDaemon {
       logger.warn(`[SELF-REPAIR] Cleaned up ${staleDeps} timed-out running deployment(s)`);
     }
 
-    // 3. Check service liveness and auto-heal crashed services
+    // 3. Auto-retention prune (keep max 100 per project or 30 days)
+    try {
+      this.deploymentRepo.pruneDeployments({ keepCount: 100, maxAgeDays: 30 });
+    } catch {
+      // ignore background auto-prune error
+    }
+
+    // 4. Check service liveness and auto-heal crashed services
     if (!dryRun) {
       const projects = this.projectRepo.getAllProjects();
       for (const proj of projects) {

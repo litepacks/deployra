@@ -1,10 +1,15 @@
+export { cleanCommand } from './cli/commands/clean.js';
+export { rollbackCommand } from './cli/commands/rollback.js';
 export { statsCommand } from './cli/commands/stats.js';
+export { statusCommand } from './cli/commands/status.js';
 export { formatDurationMs, parseDurationMs } from './config/duration.js';
 export {
   computeConfigHash,
+  deepMerge,
   findConfigFile,
   loadConfig,
   loadConfigFromDir,
+  parseEnvFile,
 } from './config/parser.js';
 export { normalizeAndValidateConfig } from './config/schema.js';
 export * from './config/types.js';
@@ -13,11 +18,24 @@ export { RollbackManager } from './deployment/rollback-manager.js';
 export * from './errors/deployra-error.js';
 export { WorkmaticEngine } from './jobs/workmatic-engine.js';
 export { Logger, logger } from './logging/logger.js';
-export { maskSecrets } from './logging/masker.js';
+export {
+  clearRegisteredSecrets,
+  maskSecrets,
+  registerSecret,
+  registerSecrets,
+} from './logging/masker.js';
 export { DeploymentPipelineRunner } from './pipeline/pipeline-runner.js';
 export { ReadyCheckerAdapter } from './readiness/ready-checker-adapter.js';
 export { UnitupAdapter } from './runtime/unitup-adapter.js';
-export { closeDatabase, getDatabase, getDatabasePath } from './storage/database.js';
+export { assertDiskSpace, checkDiskSpace } from './security/disk-check.js';
+export { extractClientIp, isIpAllowed, matchCidr, normalizeIp } from './security/ip-matcher.js';
+export {
+  closeDatabase,
+  getDatabase,
+  getDatabasePath,
+  getDatabaseSize,
+  vacuumDatabase,
+} from './storage/database.js';
 export { DeploymentRepository } from './storage/deployment-repository.js';
 export { ProjectRepository } from './storage/project-repository.js';
 export { StateRepository } from './storage/state-repository.js';
