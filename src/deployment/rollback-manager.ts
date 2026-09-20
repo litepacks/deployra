@@ -103,7 +103,24 @@ export class RollbackManager {
       }
     }
 
+    const isZeroDowntime =
+      data.config.deploy.strategy === 'zero-downtime' ||
+      data.config.deploy.zeroDowntime ||
+      data.config.deploy.service.zeroDowntime;
+
     if (!data.previousSuccessfulSha) {
+      if (isZeroDowntime) {
+        logger.info(
+          `Rolling back zero-downtime service '${data.config.deploy.service.name}' to previous active generation...`,
+          { project: data.projectName },
+        );
+        await this.unitupAdapter.rollbackZeroDowntime(data.config.deploy.service.name);
+        logger.info(
+          `Zero-downtime generation rollback successfully completed for project '${data.projectName}'`,
+          { project: data.projectName },
+        );
+        return;
+      }
       logger.warn(
         `Rollback skipped for project '${data.projectName}': No previous successful SHA found.`,
       );
@@ -135,9 +152,13 @@ export class RollbackManager {
         await this.syncIsolatedWorkspace(workingDir, data.projectPath);
       }
 
-      // 3. Restart systemd service via Unitup
+      // 3. Restart or rollback service via Unitup
       if (data.config.deploy.service.action !== 'none') {
-        await this.unitupAdapter.restart(data.config.deploy.service.name);
+        if (isZeroDowntime) {
+          await this.unitupAdapter.rollbackZeroDowntime(data.config.deploy.service.name);
+        } else {
+          await this.unitupAdapter.restart(data.config.deploy.service.name);
+        }
       }
 
       // 4. Verify readiness again via Ready-checker

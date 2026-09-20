@@ -130,6 +130,7 @@ export class SourceWatcher {
     triggerType: 'poll' | 'manual' | 'webhook' = 'poll',
     dryRun = false,
     explicitTargetSha?: string,
+    canaryOptions?: { canary?: boolean; canaryWeight?: number | string },
   ): Promise<string | null> {
     if (this.checkingProjects.has(projectName)) {
       logger.debug(
@@ -296,6 +297,8 @@ export class SourceWatcher {
         targetSha: remoteSha,
         triggerType,
         dryRun,
+        canary: canaryOptions?.canary,
+        canaryWeight: canaryOptions?.canaryWeight,
         triggeredAt: Date.now(),
       });
 

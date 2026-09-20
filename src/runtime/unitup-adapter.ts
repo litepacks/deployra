@@ -2,6 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   addService,
+  defaultDeploymentManager,
+  defaultRollbackManager,
+  generations,
   getServiceStatus,
   isUserSystemdAvailable,
   removeService,
@@ -12,7 +15,16 @@ import {
 } from 'unitup';
 import { RuntimeError } from '../errors/deployra-error.js';
 import { logger } from '../logging/logger.js';
-import type { RuntimeManager, RuntimeStatus, ServiceOptions } from './runtime-manager.js';
+import type {
+  GenerationRecordInfo,
+  RuntimeManager,
+  RuntimeStatus,
+  ServiceOptions,
+  ZeroDowntimeOptions,
+  ZeroDowntimePromoteResult,
+  ZeroDowntimeResult,
+  ZeroDowntimeRollbackResult,
+} from './runtime-manager.js';
 
 export function parseCommandString(command: string): { command: string; args?: string[] } {
   const trimmed = command.trim();
@@ -161,7 +173,7 @@ export class UnitupAdapter implements RuntimeManager {
     );
 
     try {
-      await addService({
+      const servicePayload: Record<string, unknown> = {
         name: service,
         cwd,
         ...entry,
@@ -169,7 +181,20 @@ export class UnitupAdapter implements RuntimeManager {
         memoryHigh: options?.memoryHigh,
         start: shouldStart,
         force: true,
-      });
+      };
+
+      if (options?.port) {
+        servicePayload.port = options.port;
+      }
+      if (options?.zeroDowntime) {
+        servicePayload.zeroDowntime = true;
+        servicePayload.deploy = {
+          zeroDowntime: true,
+          drainTimeout: options.drainTimeout,
+        };
+      }
+
+      await addService(servicePayload as any);
       logger.info(`Successfully created/updated service '${service}' via unitup!`, {
         service,
       });
@@ -278,24 +303,34 @@ export class UnitupAdapter implements RuntimeManager {
 
   public async status(service: string): Promise<RuntimeStatus> {
     if (!(await this.isSystemdAvailable())) {
+      const gens = await this.getGenerations(service);
       return {
         service,
         active: true,
         subState: 'simulated (non-systemd)',
         mainPid: 1234,
+        generations: gens.length > 0 ? gens : undefined,
       };
     }
     try {
       const res = await getServiceStatus(service);
-      const parsedPid = res?.pid && res.pid !== '-' ? parseInt(res.pid, 10) : undefined;
-      const parsedRestarts = res?.restarts ? parseInt(res.restarts, 10) : undefined;
+      const parsedPid = res?.pid && res.pid !== '-' ? parseInt(String(res.pid), 10) : undefined;
+      const parsedRestarts =
+        typeof res?.restarts === 'number'
+          ? res.restarts
+          : res?.restarts
+            ? parseInt(String(res.restarts), 10)
+            : undefined;
+
+      const gens = await this.getGenerations(service);
 
       return {
         service,
-        active: res?.activeState === 'active',
-        subState: res?.subState,
+        active: res?.state === 'running' || (res as any)?.activeState === 'active',
+        subState: (res as any)?.subState || res?.state,
         mainPid: Number.isNaN(parsedPid!) ? undefined : parsedPid,
         restartCount: Number.isNaN(parsedRestarts!) ? undefined : parsedRestarts,
+        generations: gens.length > 0 ? gens : undefined,
       };
     } catch {
       return {
@@ -322,6 +357,239 @@ export class UnitupAdapter implements RuntimeManager {
       }
     } catch (err: any) {
       logger.warn(`Failed to remove unitup service '${service}': ${err.message}`, { service });
+    }
+  }
+
+  public async deployZeroDowntime(
+    service: string,
+    options?: ZeroDowntimeOptions,
+  ): Promise<ZeroDowntimeResult> {
+    const cwd = options?.cwd || process.cwd();
+    const entry = resolveEntryPoint(cwd, options?.script, options?.command);
+
+    logger.info(`Starting zero-downtime deployment for '${service}' via unitup...`, {
+      service,
+      publicPort: options?.publicPort,
+      canary: options?.canary,
+      canaryWeight: options?.canaryWeight,
+    });
+
+    try {
+      // If service unit does not exist yet or needs registration, ensure it's registered
+      if (!unitFileExists(service)) {
+        await this.upsertService(
+          service,
+          {
+            cwd,
+            command: entry.command,
+            script: entry.script,
+            port: options?.publicPort,
+            zeroDowntime: true,
+            drainTimeout: options?.drainTimeout,
+          },
+          true,
+        );
+      }
+
+      let command = entry.command;
+      let args = entry.args || [];
+      if (!command && entry.script) {
+        command = process.execPath;
+        args = [path.resolve(cwd, entry.script)];
+      } else if (command === 'node' && entry.script && args.length === 0) {
+        args = [path.resolve(cwd, entry.script)];
+      }
+
+      const svcConfig: Record<string, unknown> = {
+        name: service,
+        command,
+        args,
+        script: entry.script,
+        cwd,
+        port: options?.publicPort,
+      };
+
+      const deployOpts: Record<string, unknown> = {
+        publicPort: options?.publicPort,
+        readyPath: options?.readyPath,
+        drainTimeout: options?.drainTimeout,
+        canary: Boolean(options?.canary),
+        canaryWeight: options?.canaryWeight,
+        weight: options?.canaryWeight,
+        ...svcConfig,
+        onProgress: (evt: any) => {
+          if (options?.onProgress) {
+            options.onProgress(evt);
+          }
+          if (evt.state === 'STARTING') {
+            logger.info(
+              `[ZERO-DOWNTIME] Generation #${evt.generation} starting on internal port :${evt.internalPort} (PID: ${evt.pid})`,
+              { service, generation: evt.generation, port: evt.internalPort, pid: evt.pid },
+            );
+          } else if (evt.state === 'WAITING_READY') {
+            logger.info(`[ZERO-DOWNTIME] Probing readiness for generation #${evt.generation}...`, {
+              service,
+              generation: evt.generation,
+            });
+          } else if (evt.state === 'SWITCHING') {
+            logger.info(
+              `[ZERO-DOWNTIME] Generation #${evt.generation} passed readiness! Switching router traffic atomically.`,
+              { service, generation: evt.generation },
+            );
+          } else if (evt.state === 'SETTING_CANARY') {
+            const pct = Math.round(evt.weight > 1 ? evt.weight : evt.weight * 100);
+            logger.info(
+              `[ZERO-DOWNTIME] Canary active! Routing ${pct}% traffic to generation #${evt.generation}.`,
+              { service, generation: evt.generation, weight: pct },
+            );
+          } else if (evt.state === 'DRAINING') {
+            logger.info(
+              `[ZERO-DOWNTIME] Draining in-flight requests on previous generation #${evt.previousGeneration}...`,
+              { service, previousGeneration: evt.previousGeneration },
+            );
+          } else if (evt.state === 'STOPPING_PREVIOUS') {
+            logger.info(
+              `[ZERO-DOWNTIME] Gracefully stopped previous generation #${evt.previousGeneration}.`,
+              { service, previousGeneration: evt.previousGeneration },
+            );
+          }
+        },
+      };
+
+      const res = await defaultDeploymentManager.deploy(service, svcConfig, deployOpts);
+      return {
+        service: res.service || service,
+        previousGeneration: res.previousGeneration ?? null,
+        currentGeneration: res.currentGeneration,
+        downtimeMs: res.downtimeMs ?? 0,
+        status: res.status,
+        canaryWeight: res.canaryWeight,
+        isCanary: Boolean(options?.canary),
+      };
+    } catch (err: any) {
+      if (isNonFatalSystemdError(err)) {
+        logger.warn(
+          `Unitup deployment encountered non-fatal daemon issue (${err.message}). Simulating zero-downtime deployment for '${service}'.`,
+        );
+        return {
+          service,
+          previousGeneration: 1,
+          currentGeneration: 2,
+          downtimeMs: 0,
+          status: 'success',
+          canaryWeight: options?.canary ? 0.1 : undefined,
+          isCanary: Boolean(options?.canary),
+        };
+      }
+      throw new RuntimeError(
+        `Unitup zero-downtime deployment failed for '${service}': ${err.message}`,
+      );
+    }
+  }
+
+  public async rollbackZeroDowntime(
+    service: string,
+    options?: ZeroDowntimeOptions,
+  ): Promise<ZeroDowntimeRollbackResult> {
+    logger.warn(`Triggering zero-downtime rollback for service '${service}' via unitup...`, {
+      service,
+    });
+    try {
+      const res = await defaultRollbackManager.rollback(
+        service,
+        {},
+        {
+          readyPath: options?.readyPath,
+          drainTimeout: options?.drainTimeout,
+          onProgress: options?.onProgress,
+        },
+      );
+      return {
+        service: res.service || service,
+        rolledBackFrom: res.rolledBackFrom ?? null,
+        activeGeneration: res.activeGeneration,
+        status: res.status,
+      };
+    } catch (err: any) {
+      if (err.message?.includes('No previous generation available')) {
+        logger.warn(`No previous generation available for zero-downtime rollback of '${service}'.`);
+        return {
+          service,
+          rolledBackFrom: null,
+          activeGeneration: 1,
+          status: 'no_previous_generation',
+        };
+      }
+      if (isNonFatalSystemdError(err)) {
+        logger.warn(`Simulating zero-downtime rollback for '${service}' (${err.message}).`);
+        return {
+          service,
+          rolledBackFrom: 2,
+          activeGeneration: 1,
+          status: 'success',
+        };
+      }
+      throw new RuntimeError(
+        `Unitup zero-downtime rollback failed for '${service}': ${err.message}`,
+      );
+    }
+  }
+
+  public async promoteZeroDowntime(
+    service: string,
+    options?: ZeroDowntimeOptions,
+  ): Promise<ZeroDowntimePromoteResult> {
+    logger.info(`Promoting canary generation for service '${service}' to 100% active...`, {
+      service,
+    });
+    try {
+      const res = await defaultDeploymentManager.promote(
+        service,
+        {},
+        {
+          readyPath: options?.readyPath,
+          drainTimeout: options?.drainTimeout,
+          onProgress: options?.onProgress,
+        },
+      );
+      return {
+        service: res.service || service,
+        promotedGeneration: res.promotedGeneration,
+        previousGeneration: res.previousGeneration ?? null,
+        downtimeMs: res.downtimeMs ?? 0,
+        status: res.status,
+      };
+    } catch (err: any) {
+      if (err.message?.includes('No canary generation found')) {
+        logger.warn(`No canary generation found for service '${service}' to promote.`);
+        return {
+          service,
+          promotedGeneration: 1,
+          previousGeneration: null,
+          downtimeMs: 0,
+          status: 'no_canary',
+        };
+      }
+      if (isNonFatalSystemdError(err)) {
+        logger.warn(`Simulating canary promote for '${service}' (${err.message}).`);
+        return {
+          service,
+          promotedGeneration: 2,
+          previousGeneration: 1,
+          downtimeMs: 0,
+          status: 'success',
+        };
+      }
+      throw new RuntimeError(`Unitup canary promotion failed for '${service}': ${err.message}`);
+    }
+  }
+
+  public async getGenerations(service: string): Promise<GenerationRecordInfo[]> {
+    try {
+      const genList = generations(service) as unknown as GenerationRecordInfo[];
+      return Array.isArray(genList) ? genList : [];
+    } catch {
+      return [];
     }
   }
 }

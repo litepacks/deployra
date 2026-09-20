@@ -13,6 +13,7 @@ import { initCommand } from './commands/init.js';
 import { listCommand } from './commands/list.js';
 import { logsCommand } from './commands/logs.js';
 import { notifyTestCommand } from './commands/notify-test.js';
+import { promoteCommand } from './commands/promote.js';
 import { removeCommand } from './commands/remove.js';
 import { rollbackCommand } from './commands/rollback.js';
 import { serviceCommand } from './commands/service.js';
@@ -117,8 +118,17 @@ program
     '-i, --inline',
     'Run deployment pipeline directly in the current process (ideal for CI/CD or testing)',
   )
+  .option('--canary', 'Deploy as canary generation without replacing active generation')
+  .option('--weight <number>', 'Canary traffic percentage or decimal (e.g. 10% or 0.1)')
   .action(async (projectName, options) => {
     await deployCommand(projectName, options);
+  });
+
+program
+  .command('promote [projectName]')
+  .description('Promote active canary generation to 100% primary traffic')
+  .action(async (projectName) => {
+    await promoteCommand(projectName);
   });
 
 program

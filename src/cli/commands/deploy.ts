@@ -41,6 +41,7 @@ async function logDeploymentMode(
 async function executeInlineDeployment(
   depId: string,
   depRepo: DeploymentRepository,
+  canaryOptions?: { canary?: boolean; canaryWeight?: number | string },
 ): Promise<void> {
   const dep = depRepo.getDeployment(depId);
   if (dep) {
@@ -52,6 +53,8 @@ async function executeInlineDeployment(
       targetSha: dep.targetSha,
       triggerType: dep.triggerType,
       dryRun: dep.dryRun,
+      canary: canaryOptions?.canary,
+      canaryWeight: canaryOptions?.canaryWeight,
       triggeredAt: dep.createdAt,
     });
   }
@@ -111,7 +114,13 @@ function reportDeploymentResult(
 
 export async function deployCommand(
   projectName?: string,
-  options?: { dryRun?: boolean; inline?: boolean; env?: string },
+  options?: {
+    dryRun?: boolean;
+    inline?: boolean;
+    env?: string;
+    canary?: boolean;
+    weight?: number | string;
+  },
 ): Promise<void> {
   const targetProject = resolveProjectName(projectName);
   if (!targetProject) {
@@ -125,6 +134,8 @@ export async function deployCommand(
 
   const isDryRun = Boolean(options?.dryRun);
   const isInline = Boolean(options?.inline);
+  const isCanary = Boolean(options?.canary);
+  const canaryWeight = options?.weight;
   const workmatic = new WorkmaticEngine();
   const depRepo = new DeploymentRepository();
   const projRepo = new ProjectRepository();
@@ -144,13 +155,26 @@ export async function deployCommand(
   const watcher = new SourceWatcher(workmatic);
 
   try {
+    if (isCanary) {
+      console.log(
+        chalk.magenta.bold(
+          `🐤 [CANARY DEPLOY] Deploying canary generation for '${targetProject}' (traffic weight: ${canaryWeight ?? '10%'})...`,
+        ),
+      );
+    }
     await logDeploymentMode(targetProject, isDryRun, isInline);
 
-    const depId = await watcher.checkProject(targetProject, 'manual', isDryRun);
+    const depId = await watcher.checkProject(targetProject, 'manual', isDryRun, undefined, {
+      canary: isCanary,
+      canaryWeight,
+    });
 
     if (depId) {
       if (isInline) {
-        await executeInlineDeployment(depId, depRepo);
+        await executeInlineDeployment(depId, depRepo, {
+          canary: isCanary,
+          canaryWeight,
+        });
       } else {
         await pollDeploymentStatus(depId, depRepo, isDryRun);
       }

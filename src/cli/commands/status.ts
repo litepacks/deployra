@@ -112,11 +112,25 @@ async function renderDashboard(
     const envLabel = p!.config?.environment ? `[${p!.config.environment}] ` : '';
 
     let serviceStateStr = chalk.gray('n/a');
+    let projectGenerations: any[] = [];
     if (p!.config?.deploy?.service?.name && p!.config?.deploy?.service?.action !== 'none') {
       try {
         const svcStatus = await unitup.status(p!.config.deploy.service.name);
+        projectGenerations = svcStatus.generations || [];
         if (svcStatus.active) {
-          serviceStateStr = chalk.green(`● active`);
+          const activeGen = projectGenerations.find((g) => g.status === 'active');
+          const canaryGen = projectGenerations.find((g) => g.status === 'canary');
+          if (canaryGen) {
+            const rawWeight = canaryGen.canaryWeight || 0.1;
+            const pct = Math.round(rawWeight > 1 ? rawWeight : rawWeight * 100);
+            serviceStateStr =
+              chalk.green('● active') +
+              chalk.magenta(` (v${activeGen?.id || '?'}+${pct}% canary v${canaryGen.id})`);
+          } else if (activeGen) {
+            serviceStateStr = chalk.green(`● active (v${activeGen.id})`);
+          } else {
+            serviceStateStr = chalk.green(`● active`);
+          }
         } else {
           serviceStateStr = chalk.red(`○ ${svcStatus.subState || 'inactive'}`);
         }
@@ -150,6 +164,43 @@ async function renderDashboard(
   }
 
   lines.push(table.toString());
+
+  // Zero-Downtime Generations Section (if available)
+  const zdProjects = projects.filter(
+    (p) =>
+      p!.config?.deploy?.strategy === 'zero-downtime' ||
+      p!.config?.deploy?.zeroDowntime ||
+      p!.config?.deploy?.service?.zeroDowntime,
+  );
+  for (const p of zdProjects) {
+    try {
+      const svcName = p!.config.deploy.service.name;
+      const svcStatus = await unitup.status(svcName);
+      if (svcStatus.generations && svcStatus.generations.length > 0) {
+        lines.push('');
+        lines.push(
+          chalk.cyan.bold(
+            `🚀 Zero-Downtime Generations for '${p!.name}' (Service: ${svcName}, Port: ${p!.config.deploy.port || p!.config.deploy.service.port || 'n/a'}):`,
+          ),
+        );
+        for (const gen of svcStatus.generations) {
+          const statusBadge =
+            gen.status === 'active'
+              ? chalk.green.bold(' ACTIVE ')
+              : gen.status === 'canary'
+                ? chalk.magenta.bold(
+                    ` CANARY (${Math.round((gen.canaryWeight || 0.1) > 1 ? gen.canaryWeight! : gen.canaryWeight! * 100)}%) `,
+                  )
+                : chalk.gray(` ${gen.status} `);
+          lines.push(
+            `  • Generation #${gen.id} [${statusBadge}] PID: ${chalk.yellow(String(gen.pid))} │ Port: :${chalk.yellow(String(gen.internalPort))} │ Created: ${new Date(gen.createdAt).toLocaleTimeString()}`,
+          );
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   // Active / Running Deployments Section
   if (activeDeployments.length > 0) {

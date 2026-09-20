@@ -166,7 +166,7 @@ export const deployraConfigSchema = z.object({
     .default({ interval: '30s' }),
   deploy: z
     .object({
-      strategy: z.enum(['in-place', 'isolated', 'release']).default('in-place'),
+      strategy: z.enum(['in-place', 'isolated', 'release', 'zero-downtime']).default('in-place'),
       workspacePath: z.string().optional(),
       concurrency: z.number().int().min(1).default(1),
       queueMode: z.enum(['latest', 'fifo', 'reject']).default('latest'),
@@ -183,6 +183,19 @@ export const deployraConfigSchema = z.object({
       env: z.record(z.string(), z.string()).default({}),
       preflight: preflightConfigSchema.default({ diskCheck: true, maxDiskUsagePercent: 98 }),
       commands: z.record(z.string(), z.array(z.string())).default({ install: [], build: [] }),
+      port: z.number().int().min(1).max(65535).optional(),
+      zeroDowntime: z.boolean().optional(),
+      drainTimeout: durationSchema.optional(),
+      canary: z
+        .union([
+          z.boolean(),
+          z.object({
+            enabled: z.boolean().default(true),
+            weight: z.union([z.number(), z.string()]).default(0.1),
+          }),
+        ])
+        .optional(),
+      canaryWeight: z.union([z.number(), z.string()]).optional(),
       service: z
         .object({
           name: z.string(),
@@ -190,6 +203,9 @@ export const deployraConfigSchema = z.object({
           stopBeforeBuild: z.boolean().default(false),
           script: z.string().optional(),
           command: z.string().optional(),
+          port: z.number().int().min(1).max(65535).optional(),
+          zeroDowntime: z.boolean().optional(),
+          drainTimeout: durationSchema.optional(),
           memoryMax: z.string().optional(),
           memoryHigh: z.string().optional(),
           cpuQuota: z.string().optional(),
@@ -400,6 +416,38 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
     }
   }
 
+  const zeroDowntime = Boolean(
+    data.deploy.strategy === 'zero-downtime' ||
+      data.deploy.zeroDowntime ||
+      data.deploy.service?.zeroDowntime,
+  );
+  const publicPort = data.deploy.port ?? data.deploy.service?.port;
+  const rawDrain = data.deploy.drainTimeout ?? data.deploy.service?.drainTimeout ?? '10s';
+  const drainTimeoutMs = parseDurationMs(rawDrain);
+
+  let canaryEnabled = false;
+  let canaryWeight = 0.1;
+  if (data.deploy.canary !== undefined) {
+    if (typeof data.deploy.canary === 'boolean') {
+      canaryEnabled = data.deploy.canary;
+    } else if (typeof data.deploy.canary === 'object') {
+      canaryEnabled = data.deploy.canary.enabled !== false;
+      if (data.deploy.canary.weight !== undefined) {
+        const rawW = data.deploy.canary.weight;
+        const parsedW =
+          typeof rawW === 'string' ? Number.parseFloat(rawW.replace('%', '')) : Number(rawW);
+        canaryWeight = Number.isNaN(parsedW) ? 0.1 : parsedW > 1 ? parsedW / 100 : parsedW;
+      }
+    }
+  }
+  if (data.deploy.canaryWeight !== undefined) {
+    const rawW = data.deploy.canaryWeight;
+    const parsedW =
+      typeof rawW === 'string' ? Number.parseFloat(rawW.replace('%', '')) : Number(rawW);
+    canaryWeight = Number.isNaN(parsedW) ? 0.1 : parsedW > 1 ? parsedW / 100 : parsedW;
+    canaryEnabled = true;
+  }
+
   return {
     project: {
       name: projectName,
@@ -434,12 +482,22 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
         maxDiskUsagePercent: data.deploy.preflight?.maxDiskUsagePercent ?? 98,
       },
       commands: data.deploy.commands,
+      port: publicPort,
+      zeroDowntime,
+      drainTimeoutMs,
+      canary: {
+        enabled: canaryEnabled,
+        weight: canaryWeight,
+      },
       service: {
         name: serviceName,
         action: serviceAction,
         stopBeforeBuild: data.deploy.service?.stopBeforeBuild ?? false,
         script: data.deploy.service?.script,
         command: data.deploy.service?.command,
+        port: publicPort,
+        zeroDowntime,
+        drainTimeoutMs,
         memoryMax: data.deploy.service?.memoryMax,
         memoryHigh: data.deploy.service?.memoryHigh,
         cpuQuota: data.deploy.service?.cpuQuota,

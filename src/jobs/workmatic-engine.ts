@@ -19,6 +19,8 @@ export interface DeploymentJobPayload {
   targetSha: string;
   triggerType: 'poll' | 'manual' | 'webhook';
   dryRun?: boolean;
+  canary?: boolean;
+  canaryWeight?: number | string;
   triggeredAt: number;
 }
 

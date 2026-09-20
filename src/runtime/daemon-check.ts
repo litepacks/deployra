@@ -5,7 +5,7 @@ export async function isDaemonRunning(): Promise<boolean> {
   try {
     if (await isSystemctlAvailable()) {
       const status = await getServiceStatus('deployra-daemon');
-      if (status?.activeState === 'active') {
+      if (status?.state === 'running' || (status as any)?.activeState === 'active') {
         return true;
       }
     }

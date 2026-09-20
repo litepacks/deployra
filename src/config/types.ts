@@ -1,4 +1,4 @@
-export type DeployStrategy = 'in-place' | 'isolated' | 'release';
+export type DeployStrategy = 'in-place' | 'isolated' | 'release' | 'zero-downtime';
 export type QueueMode = 'latest' | 'fifo' | 'reject';
 export type DirtyWorkspaceMode = 'reject' | 'reset' | 'stash';
 export type ServiceAction = 'start' | 'restart' | 'reload' | 'none';
@@ -75,6 +75,9 @@ export interface DeployServiceConfig {
   stopBeforeBuild?: boolean;
   script?: string;
   command?: string;
+  port?: number;
+  zeroDowntime?: boolean;
+  drainTimeout?: string | number;
   memoryMax?: string; // e.g. '512M', '1G'
   memoryHigh?: string; // e.g. '400M'
   cpuQuota?: string; // e.g. '50%'
@@ -103,6 +106,11 @@ export interface DeployConfig {
   service?: DeployServiceConfig;
   ready?: ReadyConfig;
   rollback?: RollbackConfig;
+  port?: number;
+  zeroDowntime?: boolean;
+  drainTimeout?: string | number;
+  canary?: boolean | { enabled?: boolean; weight?: number | string };
+  canaryWeight?: number | string;
 }
 
 export interface ProjectConfig {
@@ -212,12 +220,22 @@ export interface NormalizedDeployraConfig {
       maxDiskUsagePercent: number;
     };
     commands: Record<string, string[]>;
+    port?: number;
+    zeroDowntime: boolean;
+    drainTimeoutMs: number;
+    canary: {
+      enabled: boolean;
+      weight: number;
+    };
     service: {
       name: string;
       action: ServiceAction;
       stopBeforeBuild: boolean;
       script?: string;
       command?: string;
+      port?: number;
+      zeroDowntime?: boolean;
+      drainTimeoutMs?: number;
       memoryMax?: string;
       memoryHigh?: string;
       cpuQuota?: string;

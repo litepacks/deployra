@@ -275,7 +275,7 @@ export class DeploymentPipelineRunner {
           throw new DeployraError('Deployment was aborted before service-action');
         }
         const serviceCwd = isRelease ? currentLink : project.path;
-        await this.performServiceAction(serviceCwd, config, isDryRun);
+        return await this.performServiceAction(serviceCwd, config, isDryRun, payload);
       });
 
       // Step 9: ready-check
@@ -582,9 +582,69 @@ export class DeploymentPipelineRunner {
     projectPath: string,
     config: NormalizedDeployraConfig,
     isDryRun = false,
-  ): Promise<void> {
+    payload?: DeploymentJobPayload,
+  ): Promise<string | undefined> {
+    const isZeroDowntime =
+      config.deploy.strategy === 'zero-downtime' ||
+      config.deploy.zeroDowntime ||
+      config.deploy.service.zeroDowntime;
     const action = config.deploy.service.action;
     const svcName = config.deploy.service.name;
+
+    if (isZeroDowntime) {
+      if (isDryRun) {
+        logger.info(
+          `[DRY-RUN] Would execute zero-downtime deployment for '${svcName}' (publicPort: ${config.deploy.port || config.deploy.service.port || 'default'}, cwd: ${projectPath})`,
+          { service: svcName, zeroDowntime: true },
+        );
+        return `[DRY-RUN] Simulated zero-downtime deploy for '${svcName}'`;
+      }
+
+      // Determine readyPath from config.deploy.ready
+      let readyPath: string | undefined;
+      const httpCheck = config.deploy.ready.checks.find(
+        (c) => c.type === 'http' || c.type === 'https',
+      );
+      if (httpCheck && 'url' in httpCheck) {
+        try {
+          const parsedUrl = new URL(httpCheck.url);
+          readyPath = parsedUrl.pathname + parsedUrl.search;
+        } catch {
+          readyPath = httpCheck.url.startsWith('/') ? httpCheck.url : undefined;
+        }
+      }
+
+      const canaryEnabled = Boolean(
+        payload?.canary !== undefined ? payload.canary : config.deploy.canary.enabled,
+      );
+      const canaryWeight =
+        payload?.canaryWeight !== undefined ? payload.canaryWeight : config.deploy.canary.weight;
+
+      const zdResult = await this.unitupAdapter.deployZeroDowntime(svcName, {
+        cwd: projectPath,
+        script: config.deploy.service.script,
+        command: config.deploy.service.command,
+        publicPort: config.deploy.port || config.deploy.service.port,
+        readyPath,
+        drainTimeout: config.deploy.drainTimeoutMs,
+        canary: canaryEnabled,
+        canaryWeight,
+      });
+
+      const outMsg = zdResult.isCanary
+        ? `Canary generation #${zdResult.currentGeneration} deployed with weight ${zdResult.canaryWeight} (active: #${zdResult.previousGeneration || 'none'}, downtime: 0ms)`
+        : `Generation #${zdResult.currentGeneration} activated (previous: #${zdResult.previousGeneration || 'none'}, downtime: ${zdResult.downtimeMs}ms)`;
+
+      logger.info(`[ZERO-DOWNTIME] ${outMsg}`, {
+        service: svcName,
+        generation: zdResult.currentGeneration,
+        previousGeneration: zdResult.previousGeneration,
+        downtimeMs: zdResult.downtimeMs,
+      });
+
+      return outMsg;
+    }
+
     const svcOpts = {
       cwd: projectPath,
       script: config.deploy.service.script,
@@ -628,11 +688,18 @@ export class DeploymentPipelineRunner {
 
     this.deploymentRepo.updateStatus(deploymentId, 'failed', err.message);
 
-    // Trigger rollback if previous successful SHA exists or if release strategy is active, lock was acquired, and rollback enabled
+    const isZeroDowntime =
+      config.deploy.strategy === 'zero-downtime' ||
+      config.deploy.zeroDowntime ||
+      config.deploy.service.zeroDowntime;
+
+    // Trigger rollback if previous successful SHA exists, or if release / zero-downtime strategy is active, lock was acquired, and rollback enabled
     const canRollback =
       lockAcquired &&
       config.deploy.rollback.enabled &&
-      ((prevSha && prevSha !== targetSha) || config.deploy.strategy === 'release');
+      ((prevSha && prevSha !== targetSha) ||
+        config.deploy.strategy === 'release' ||
+        isZeroDowntime);
 
     const depRecord = this.deploymentRepo.getDeployment(deploymentId);
     const durationMs = depRecord?.startedAt ? Date.now() - depRecord.startedAt : undefined;
