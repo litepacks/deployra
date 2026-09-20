@@ -26,14 +26,23 @@ import type {
   ZeroDowntimeRollbackResult,
 } from './runtime-manager.js';
 
+const COMMAND_CACHE = new Map<string, { command: string; args?: string[] }>();
+
 export function parseCommandString(command: string): { command: string; args?: string[] } {
+  const cached = COMMAND_CACHE.get(command);
+  if (cached) return cached;
+
   const trimmed = command.trim();
   if (!trimmed) {
-    return { command: '' };
+    const res = { command: '' };
+    COMMAND_CACHE.set(command, res);
+    return res;
   }
 
   if (/[&|;<>]/.test(trimmed)) {
-    return { command: 'sh', args: ['-c', trimmed] };
+    const res = { command: 'sh', args: ['-c', trimmed] };
+    COMMAND_CACHE.set(command, res);
+    return res;
   }
 
   const tokens: string[] = [];
@@ -51,66 +60,86 @@ export function parseCommandString(command: string): { command: string; args?: s
   }
 
   if (tokens.length === 0) {
-    return { command: trimmed };
+    const res = { command: trimmed };
+    COMMAND_CACHE.set(command, res);
+    return res;
   }
 
   const binary = tokens[0];
   const args = tokens.slice(1);
 
-  return {
+  const res = {
     command: binary,
     ...(args.length > 0 ? { args } : {}),
   };
+
+  if (COMMAND_CACHE.size < 500) {
+    COMMAND_CACHE.set(command, res);
+  }
+  return res;
 }
+
+const ENTRY_POINT_CACHE = new Map<string, { script?: string; command?: string; args?: string[] }>();
 
 function resolveEntryPoint(
   cwd?: string,
   script?: string,
   command?: string,
 ): { script?: string; command?: string; args?: string[] } {
-  if (command) {
-    return parseCommandString(command);
-  }
-  if (script) {
-    return { script };
-  }
+  const cacheKey = `${cwd || ''}::${script || ''}::${command || ''}`;
+  const cached = ENTRY_POINT_CACHE.get(cacheKey);
+  if (cached) return cached;
 
-  if (cwd && fs.existsSync(cwd)) {
+  let result: { script?: string; command?: string; args?: string[] } | undefined;
+  if (command) {
+    result = parseCommandString(command);
+  } else if (script) {
+    result = { script };
+  } else if (cwd && fs.existsSync(cwd)) {
     const pkgPath = path.join(cwd, 'package.json');
     if (fs.existsSync(pkgPath)) {
       try {
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
         if (pkg.main && fs.existsSync(path.join(cwd, pkg.main))) {
-          return { script: pkg.main };
-        }
-        if (pkg.scripts?.start) {
-          return { command: 'npm', args: ['start'] };
+          result = { script: pkg.main };
+        } else if (pkg.scripts?.start) {
+          result = { command: 'npm', args: ['start'] };
         }
       } catch {
         // Ignore JSON parse errors
       }
     }
 
-    const candidates = [
-      'index.js',
-      'server.js',
-      'app.js',
-      'main.js',
-      'dist/index.js',
-      'dist/server.js',
-      'dist/main.js',
-      'build/index.js',
-      'src/index.js',
-    ];
+    if (!result) {
+      const candidates = [
+        'index.js',
+        'server.js',
+        'app.js',
+        'main.js',
+        'dist/index.js',
+        'dist/server.js',
+        'dist/main.js',
+        'build/index.js',
+        'src/index.js',
+      ];
 
-    for (const candidate of candidates) {
-      if (fs.existsSync(path.join(cwd, candidate))) {
-        return { script: candidate };
+      for (const candidate of candidates) {
+        if (fs.existsSync(path.join(cwd, candidate))) {
+          result = { script: candidate };
+          break;
+        }
       }
     }
   }
 
-  return { script: 'index.js' };
+  if (!result) {
+    result = { script: 'index.js' };
+  }
+
+  if (ENTRY_POINT_CACHE.size < 500) {
+    ENTRY_POINT_CACHE.set(cacheKey, result);
+  }
+  return result;
 }
 
 function isNonFatalSystemdError(err: any): boolean {
@@ -131,27 +160,36 @@ function isNonFatalSystemdError(err: any): boolean {
 
 export class UnitupAdapter implements RuntimeManager {
   private systemdAvailabilityCache?: boolean;
+  private systemdCheckPromise?: Promise<boolean>;
 
-  private async isSystemdAvailable(): Promise<boolean> {
+  private isSystemdAvailable(): Promise<boolean> | boolean {
     if (this.systemdAvailabilityCache !== undefined) {
       return this.systemdAvailabilityCache;
     }
-    try {
-      const checkPromise = isUserSystemdAvailable();
-      let timer: NodeJS.Timeout | undefined;
-      const timeoutPromise = new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), 1500);
-      });
-      try {
-        this.systemdAvailabilityCache = await Promise.race([checkPromise, timeoutPromise]);
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
-      return this.systemdAvailabilityCache;
-    } catch {
-      this.systemdAvailabilityCache = false;
-      return false;
+    if (this.systemdCheckPromise) {
+      return this.systemdCheckPromise;
     }
+    this.systemdCheckPromise = (async () => {
+      try {
+        const checkPromise = isUserSystemdAvailable();
+        let timer: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 1500);
+        });
+        try {
+          this.systemdAvailabilityCache = await Promise.race([checkPromise, timeoutPromise]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+        return this.systemdAvailabilityCache;
+      } catch {
+        this.systemdAvailabilityCache = false;
+        return false;
+      } finally {
+        this.systemdCheckPromise = undefined;
+      }
+    })();
+    return this.systemdCheckPromise;
   }
 
   private async upsertService(
@@ -211,7 +249,11 @@ export class UnitupAdapter implements RuntimeManager {
   }
 
   public async start(service: string, options?: ServiceOptions): Promise<void> {
-    if (!(await this.isSystemdAvailable())) {
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
       logger.warn(
         `Systemd is not available on this platform. Simulating service start for '${service}'.`,
       );
@@ -233,7 +275,11 @@ export class UnitupAdapter implements RuntimeManager {
   }
 
   public async stop(service: string): Promise<void> {
-    if (!(await this.isSystemdAvailable())) {
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
       logger.warn(
         `Systemd is not available on this platform. Simulating service stop for '${service}'.`,
       );
@@ -254,7 +300,11 @@ export class UnitupAdapter implements RuntimeManager {
   }
 
   public async restart(service: string, options?: ServiceOptions): Promise<void> {
-    if (!(await this.isSystemdAvailable())) {
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
       logger.warn(
         `Systemd is not available on this platform. Simulating service restart for '${service}'.`,
       );
@@ -278,7 +328,11 @@ export class UnitupAdapter implements RuntimeManager {
   }
 
   public async reload(service: string, options?: ServiceOptions): Promise<void> {
-    if (!(await this.isSystemdAvailable())) {
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
       logger.warn(
         `Systemd is not available on this platform. Simulating service reload for '${service}'.`,
       );
@@ -302,7 +356,11 @@ export class UnitupAdapter implements RuntimeManager {
   }
 
   public async status(service: string): Promise<RuntimeStatus> {
-    if (!(await this.isSystemdAvailable())) {
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
       const gens = await this.getGenerations(service);
       return {
         service,
@@ -342,7 +400,11 @@ export class UnitupAdapter implements RuntimeManager {
   }
 
   public async remove(service: string): Promise<void> {
-    if (!(await this.isSystemdAvailable())) {
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
       logger.warn(
         `Systemd is not available on this platform. Simulating service removal for '${service}'.`,
       );

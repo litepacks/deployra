@@ -93,8 +93,8 @@ export class DeploymentPipelineRunner {
     const isDryRun = Boolean(payload.dryRun);
     let lockAcquired = false;
 
-    const initialDep = this.deploymentRepo.getDeployment(deploymentId);
-    if (initialDep?.status === 'cancelled') {
+    const initialStatus = this.deploymentRepo.getDeploymentStatus(deploymentId);
+    if (initialStatus === 'cancelled') {
       logger.info(`Deployment #${deploymentId} was cancelled before starting.`, {
         project: projectName,
         deploymentId,
@@ -379,8 +379,8 @@ export class DeploymentPipelineRunner {
           { project: projectName, deploymentId, dryRun: isDryRun },
         );
 
-        const depRecord = this.deploymentRepo.getDeployment(deploymentId);
-        const durationMs = depRecord?.startedAt ? Date.now() - depRecord.startedAt : undefined;
+        const startedAt = this.deploymentRepo.getDeploymentStartedAt(deploymentId);
+        const durationMs = startedAt ? Date.now() - startedAt : undefined;
         await this.notificationService.sendDeploymentNotification(config, {
           projectName,
           deploymentId,
@@ -393,16 +393,16 @@ export class DeploymentPipelineRunner {
         });
       });
     } catch (err: any) {
-      const currentDep = this.deploymentRepo.getDeployment(deploymentId);
+      const currentStatus = this.deploymentRepo.getDeploymentStatus(deploymentId);
       const isCancelled =
-        currentDep?.status === 'cancelled' ||
+        currentStatus === 'cancelled' ||
         abortController.signal.aborted ||
         Boolean(err.message?.toLowerCase().includes('cancelled'));
 
       this.abortDeployment(deploymentId, err.message || 'Deployment failed');
 
       if (isCancelled) {
-        if (currentDep?.status !== 'cancelled') {
+        if (currentStatus !== 'cancelled') {
           this.deploymentRepo.updateStatus(
             deploymentId,
             'cancelled',
@@ -701,8 +701,8 @@ export class DeploymentPipelineRunner {
         config.deploy.strategy === 'release' ||
         isZeroDowntime);
 
-    const depRecord = this.deploymentRepo.getDeployment(deploymentId);
-    const durationMs = depRecord?.startedAt ? Date.now() - depRecord.startedAt : undefined;
+    const startedAt = this.deploymentRepo.getDeploymentStartedAt(deploymentId);
+    const durationMs = startedAt ? Date.now() - startedAt : undefined;
 
     if (canRollback) {
       try {
@@ -764,8 +764,8 @@ export class DeploymentPipelineRunner {
       startedAt: startTime,
     });
 
-    const currentDep = this.deploymentRepo.getDeployment(deploymentId);
-    if (currentDep?.status === 'cancelled') {
+    const currentStatus = this.deploymentRepo.getDeploymentStatus(deploymentId);
+    if (currentStatus === 'cancelled') {
       throw new DeployraError(`Deployment #${deploymentId} was cancelled`);
     }
 

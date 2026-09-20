@@ -20,6 +20,8 @@ export function getDatabasePath(): string {
   return path.join(dir, 'deployra.db');
 }
 
+const statementCache = new Map<string, any>();
+
 export function getDatabase(): SQLiteDatabase {
   if (dbInstance) {
     return dbInstance;
@@ -28,13 +30,25 @@ export function getDatabase(): SQLiteDatabase {
   const dbPath = getDatabasePath();
   dbInstance = new Database(dbPath);
   dbInstance.pragma('journal_mode = WAL');
+  dbInstance.pragma('synchronous = NORMAL');
   dbInstance.pragma('foreign_keys = ON');
 
   initDatabaseSchema(dbInstance);
   return dbInstance;
 }
 
+export function getPreparedStatement(sql: string): any {
+  const db = getDatabase();
+  let stmt = statementCache.get(sql);
+  if (!stmt) {
+    stmt = db.prepare(sql);
+    statementCache.set(sql, stmt);
+  }
+  return stmt;
+}
+
 export function closeDatabase(): void {
+  statementCache.clear();
   if (dbInstance) {
     dbInstance.close();
     dbInstance = null;
@@ -120,6 +134,7 @@ function initDatabaseSchema(db: SQLiteDatabase): void {
 
     CREATE INDEX IF NOT EXISTS idx_deployments_project_created ON deployments(project_name, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_deployments_status ON deployments(status);
+    CREATE INDEX IF NOT EXISTS idx_deployments_proj_status ON deployments(project_name, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_deployment_steps_deployment ON deployment_steps(deployment_id);
   `);
 

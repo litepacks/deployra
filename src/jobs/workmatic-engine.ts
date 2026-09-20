@@ -115,8 +115,8 @@ export class WorkmaticEngine {
 
       await this.runForProject(payload.projectName, async () => {
         // Check if deployment was cancelled while waiting in the project queue
-        const currentDep = this.deploymentRepo.getDeployment(payload.deploymentId);
-        if (currentDep?.status === 'cancelled') {
+        const status = this.deploymentRepo.getDeploymentStatus(payload.deploymentId);
+        if (status === 'cancelled') {
           logger.info(
             `Skipping cancelled deployment job #${payload.deploymentId} for project '${payload.projectName}'`,
             {
@@ -192,22 +192,18 @@ export class WorkmaticEngine {
         'Cancelled by newer commit deployment',
       );
     }
-    const active = this.deploymentRepo.getActiveDeployments(projectName);
-    for (const dep of active) {
-      if (dep.status === 'queued' || dep.status === 'running') {
-        this.deploymentRepo.updateStatus(
-          dep.id,
-          'cancelled',
-          'Cancelled by newer commit deployment',
-        );
-        logger.info(
-          `Cancelled older ${dep.status} deployment #${dep.id} for project '${projectName}'`,
-          {
-            project: projectName,
-            deploymentId: dep.id,
-          },
-        );
-      }
+    const cancelled = this.deploymentRepo.cancelPendingDeployments(
+      projectName,
+      'Cancelled by newer commit deployment',
+    );
+    for (const dep of cancelled) {
+      logger.info(
+        `Cancelled older ${dep.status} deployment #${dep.id} for project '${projectName}'`,
+        {
+          project: projectName,
+          deploymentId: dep.id,
+        },
+      );
     }
   }
 

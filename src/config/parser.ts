@@ -7,10 +7,8 @@ import { normalizeAndValidateConfig } from './schema.js';
 import type { NormalizedDeployraConfig } from './types.js';
 
 export function computeConfigHash(config: NormalizedDeployraConfig | object): string {
-  const copy = JSON.parse(JSON.stringify(config));
-  delete copy.configHash;
-  delete copy.configVersion;
-  const jsonStr = JSON.stringify(copy);
+  const { configHash, configVersion, ...rest } = config as any;
+  const jsonStr = JSON.stringify(rest);
   return `cfg_${crypto.createHash('sha256').update(jsonStr).digest('hex').slice(0, 12)}`;
 }
 

@@ -58,9 +58,14 @@ export async function safeExec(
   const isPosix = process.platform !== 'win32';
 
   return new Promise((resolve, reject) => {
+    const env =
+      options.env && Object.keys(options.env).length > 0
+        ? { ...process.env, ...options.env }
+        : process.env;
+
     const spawnOptions: SpawnOptions = {
       cwd: options.cwd,
-      env: { ...process.env, ...options.env },
+      env,
       shell: false, // Prevents shell injection by avoiding shell execution
       detached: isPosix, // Creates a new process group on POSIX so child + subchildren can be killed cleanly
     };

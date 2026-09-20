@@ -1,7 +1,7 @@
 import { computeConfigHash } from '../config/parser.js';
 import { isUrlLike, sanitizeProjectName } from '../config/schema.js';
 import type { NormalizedDeployraConfig } from '../config/types.js';
-import { getDatabase } from './database.js';
+import { getPreparedStatement } from './database.js';
 
 export interface StoredProject {
   name: string;
@@ -19,11 +19,11 @@ export interface StoredProject {
 export class ProjectRepository {
   public cleanupLegacyUrlProjects(): void {
     try {
-      const db = getDatabase();
-      const rows = db.prepare(`SELECT name FROM projects`).all() as any[];
+      const rows = getPreparedStatement(`SELECT name FROM projects`).all() as any[];
+      const deleteStmt = getPreparedStatement(`DELETE FROM projects WHERE name = ?`);
       for (const row of rows) {
         if (isUrlLike(row.name) || /[/:\\]/.test(row.name)) {
-          db.prepare(`DELETE FROM projects WHERE name = ?`).run(row.name);
+          deleteStmt.run(row.name);
         }
       }
     } catch {
@@ -32,7 +32,6 @@ export class ProjectRepository {
   }
 
   public saveProject(config: NormalizedDeployraConfig): StoredProject {
-    const db = getDatabase();
     const now = Date.now();
 
     const computedHash = config.configHash || computeConfigHash(config);
@@ -50,7 +49,7 @@ export class ProjectRepository {
     config.configHash = computedHash;
     config.configVersion = newVersion;
 
-    const stmt = db.prepare(`
+    const stmt = getPreparedStatement(`
       INSERT INTO projects (name, path, remote, branch, config_json, config_hash, config_version, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(name) DO UPDATE SET
@@ -74,15 +73,26 @@ export class ProjectRepository {
       now,
     );
 
-    return this.getProject(config.project.name)!;
+    return {
+      name: config.project.name,
+      path: config.project.path,
+      remote: config.source.remote,
+      branch: config.source.branch,
+      lastSeenSha: existing?.lastSeenSha,
+      lastSuccessfulSha: existing?.lastSuccessfulSha,
+      config,
+      configHash: computedHash,
+      configVersion: newVersion,
+      updatedAt: now,
+    };
   }
 
   public getProject(name: string): StoredProject | null {
-    const db = getDatabase();
     const sanitized = sanitizeProjectName(name);
-    let row = db.prepare(`SELECT * FROM projects WHERE name = ?`).get(sanitized) as any;
-    if (!row) {
-      row = db.prepare(`SELECT * FROM projects WHERE name = ?`).get(name) as any;
+    const query = getPreparedStatement(`SELECT * FROM projects WHERE name = ?`);
+    let row = query.get(sanitized) as any;
+    if (!row && sanitized !== name) {
+      row = query.get(name) as any;
     }
     if (!row) return null;
 
@@ -108,8 +118,7 @@ export class ProjectRepository {
   }
 
   public getAllProjects(): StoredProject[] {
-    const db = getDatabase();
-    const rows = db.prepare(`SELECT * FROM projects ORDER BY name ASC`).all() as any[];
+    const rows = getPreparedStatement(`SELECT * FROM projects ORDER BY name ASC`).all() as any[];
     return rows.map((row) => {
       const parsedConfig = JSON.parse(row.config_json) as NormalizedDeployraConfig;
       const hash = row.config_hash || parsedConfig.configHash || computeConfigHash(parsedConfig);
@@ -134,26 +143,24 @@ export class ProjectRepository {
   }
 
   public deleteProject(name: string): boolean {
-    const db = getDatabase();
     const sanitized = sanitizeProjectName(name);
-    const result = db
-      .prepare(`DELETE FROM projects WHERE name = ? OR name = ?`)
-      .run(name, sanitized);
+    const result = getPreparedStatement(`DELETE FROM projects WHERE name = ? OR name = ?`).run(
+      name,
+      sanitized,
+    );
     return result.changes > 0;
   }
 
   public updateLastSeenSha(name: string, sha: string): void {
-    const db = getDatabase();
     const sanitized = sanitizeProjectName(name);
-    db.prepare(
+    getPreparedStatement(
       `UPDATE projects SET last_seen_sha = ?, updated_at = ? WHERE name = ? OR name = ?`,
     ).run(sha, Date.now(), name, sanitized);
   }
 
   public updateLastSuccessfulSha(name: string, sha: string): void {
-    const db = getDatabase();
     const sanitized = sanitizeProjectName(name);
-    db.prepare(
+    getPreparedStatement(
       `UPDATE projects SET last_successful_sha = ?, last_seen_sha = ?, updated_at = ? WHERE name = ? OR name = ?`,
     ).run(sha, sha, Date.now(), name, sanitized);
   }

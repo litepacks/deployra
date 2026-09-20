@@ -1,5 +1,6 @@
+import fs from 'node:fs';
 import { nanoid } from 'nanoid';
-import { computeConfigHash, loadConfigFromDir } from '../config/parser.js';
+import { computeConfigHash, findConfigFile, loadConfig } from '../config/parser.js';
 import { isUrlLike } from '../config/schema.js';
 import { GitClient } from '../git/git-client.js';
 import type { WorkmaticEngine } from '../jobs/workmatic-engine.js';
@@ -17,6 +18,7 @@ export class SourceWatcher {
   private errorCounts = new Map<string, number>();
   private checkingProjects = new Set<string>();
   private lastCheckTimestamps = new Map<string, number>();
+  private configMtimes = new Map<string, { filePath: string; mtimeMs: number }>();
 
   private syncTimer?: NodeJS.Timeout;
   private targetProjectName?: string;
@@ -52,6 +54,7 @@ export class SourceWatcher {
     this.errorCounts.clear();
     this.checkingProjects.clear();
     this.lastCheckTimestamps.clear();
+    this.configMtimes.clear();
   }
 
   public async syncProjects(): Promise<void> {
@@ -70,6 +73,7 @@ export class SourceWatcher {
         this.errorCounts.delete(name);
         this.checkingProjects.delete(name);
         this.lastCheckTimestamps.delete(name);
+        this.configMtimes.delete(name);
         logger.info(`Stopped monitoring removed project '${name}'`, { project: name });
       }
     }
@@ -115,14 +119,7 @@ export class SourceWatcher {
   }
 
   private countRecentFailedAttempts(projectName: string, targetSha: string): number {
-    const recent = this.deploymentRepo.getDeploymentsByProject(projectName, 10);
-    return recent.filter(
-      (d) =>
-        (d.targetSha === targetSha ||
-          d.targetSha.startsWith(targetSha) ||
-          targetSha.startsWith(d.targetSha)) &&
-        ['failed', 'rolled_back', 'rollback_failed'].includes(d.status),
-    ).length;
+    return this.deploymentRepo.countRecentFailures(projectName, targetSha, 10);
   }
 
   public async checkProject(
@@ -149,17 +146,29 @@ export class SourceWatcher {
     this.lastCheckTimestamps.set(projectName, Date.now());
 
     try {
-      // Refresh config from disk if updated
+      // Refresh config from disk if updated (cached by mtimeMs to avoid redundant YAML reads & parses)
       try {
-        const diskConfig = loadConfigFromDir(proj.path);
-        if (diskConfig) {
-          const diskHash = computeConfigHash(diskConfig);
-          if (diskHash !== proj.configHash) {
-            proj = this.projectRepo.saveProject(diskConfig);
-            logger.info(
-              `Detected config change on disk for project '${projectName}' (version v${proj.configVersion}, hash ${proj.configHash})`,
-              { project: projectName },
-            );
+        const cached = this.configMtimes.get(proj.path);
+        let configPath = cached?.filePath;
+        if (!configPath || !fs.existsSync(configPath)) {
+          configPath = findConfigFile(proj.path);
+        }
+
+        if (configPath) {
+          const stat = fs.statSync(configPath);
+          if (!cached || cached.filePath !== configPath || cached.mtimeMs !== stat.mtimeMs) {
+            this.configMtimes.set(proj.path, { filePath: configPath, mtimeMs: stat.mtimeMs });
+            const diskConfig = loadConfig(configPath);
+            if (diskConfig) {
+              const diskHash = computeConfigHash(diskConfig);
+              if (diskHash !== proj.configHash) {
+                proj = this.projectRepo.saveProject(diskConfig);
+                logger.info(
+                  `Detected config change on disk for project '${projectName}' (version v${proj.configVersion}, hash ${proj.configHash})`,
+                  { project: projectName },
+                );
+              }
+            }
           }
         }
       } catch {
@@ -184,7 +193,7 @@ export class SourceWatcher {
         return sha1 === sha2 || sha1.startsWith(sha2) || sha2.startsWith(sha1);
       };
 
-      const activeDeps = this.deploymentRepo.getActiveDeployments(projectName);
+      const activeDeps = this.deploymentRepo.getActiveDeploymentSummaries(projectName);
 
       // Deduplication & Self-Repair logic on polling
       if (triggerType === 'poll') {

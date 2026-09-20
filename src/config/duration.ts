@@ -1,9 +1,16 @@
 /**
  * Parses duration strings like '500ms', '30s', '5m', '1h' into milliseconds.
  */
+const DURATION_CACHE = new Map<string, number>();
+
 export function parseDurationMs(duration: string | number): number {
   if (typeof duration === 'number') {
     return duration;
+  }
+
+  const cached = DURATION_CACHE.get(duration);
+  if (cached !== undefined) {
+    return cached;
   }
 
   const trimmed = duration.trim();
@@ -14,23 +21,35 @@ export function parseDurationMs(duration: string | number): number {
     );
   }
 
-  const val = parseFloat(match[1]);
+  const val = parseFloat(match[1]!);
   const unit = (match[2] || 'ms').toLowerCase();
 
+  let result: number;
   switch (unit) {
     case 'ms':
-      return Math.round(val);
+      result = Math.round(val);
+      break;
     case 's':
-      return Math.round(val * 1000);
+      result = Math.round(val * 1000);
+      break;
     case 'm':
-      return Math.round(val * 60 * 1000);
+      result = Math.round(val * 60 * 1000);
+      break;
     case 'h':
-      return Math.round(val * 60 * 60 * 1000);
+      result = Math.round(val * 60 * 60 * 1000);
+      break;
     case 'd':
-      return Math.round(val * 24 * 60 * 60 * 1000);
+      result = Math.round(val * 24 * 60 * 60 * 1000);
+      break;
     default:
-      return Math.round(val);
+      result = Math.round(val);
+      break;
   }
+
+  if (DURATION_CACHE.size < 1000) {
+    DURATION_CACHE.set(duration, result);
+  }
+  return result;
 }
 
 export function formatDurationMs(ms: number): string {

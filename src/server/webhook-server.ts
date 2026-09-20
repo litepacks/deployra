@@ -83,8 +83,9 @@ export class WebhookServer {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-    const pathname = url.pathname;
+    const rawUrl = req.url || '/';
+    const qIdx = rawUrl.indexOf('?');
+    const pathname = qIdx === -1 ? rawUrl : rawUrl.slice(0, qIdx);
 
     // Health check endpoint
     if (req.method === 'GET' && (pathname === '/health' || pathname === '/api/v1/health')) {
@@ -93,11 +94,20 @@ export class WebhookServer {
     }
 
     // Match /api/v1/webhook/:projectName or /webhook/:projectName
-    const webhookMatch =
-      pathname.match(/^\/api\/v1\/webhook\/([^/]+)$/) || pathname.match(/^\/webhook\/([^/]+)$/);
+    let projectName: string | null = null;
+    if (pathname.startsWith('/api/v1/webhook/')) {
+      const seg = pathname.slice(16);
+      if (seg && !seg.includes('/')) {
+        projectName = decodeURIComponent(seg);
+      }
+    } else if (pathname.startsWith('/webhook/')) {
+      const seg = pathname.slice(9);
+      if (seg && !seg.includes('/')) {
+        projectName = decodeURIComponent(seg);
+      }
+    }
 
-    if (req.method === 'POST' && webhookMatch) {
-      const projectName = decodeURIComponent(webhookMatch[1]);
+    if (req.method === 'POST' && projectName) {
       await this.processWebhook(projectName, req, res);
       return;
     }
@@ -250,12 +260,12 @@ export class WebhookServer {
       const expectedPrefix = 'sha256=';
       if (!ghSignature.startsWith(expectedPrefix)) return false;
       const signatureHex = ghSignature.slice(expectedPrefix.length);
+      if (signatureHex.length !== 64) return false;
 
-      const hmac = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+      const hmacBuffer = crypto.createHmac('sha256', secret).update(rawBody).digest();
 
       try {
         const sigBuffer = Buffer.from(signatureHex, 'hex');
-        const hmacBuffer = Buffer.from(hmac, 'hex');
         if (sigBuffer.length !== hmacBuffer.length) return false;
         return crypto.timingSafeEqual(sigBuffer, hmacBuffer);
       } catch {
@@ -297,23 +307,24 @@ export class WebhookServer {
 
   private readBody(req: IncomingMessage, maxBytes = 5 * 1024 * 1024): Promise<string | null> {
     return new Promise((resolve) => {
-      let data = '';
+      const chunks: Buffer[] = [];
       let bytesRead = 0;
 
       const onData = (chunk: Buffer | string) => {
-        bytesRead += chunk.length;
+        const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+        bytesRead += buf.length;
         if (bytesRead > maxBytes) {
           cleanup();
           req.destroy();
           resolve(null);
           return;
         }
-        data += chunk;
+        chunks.push(buf);
       };
 
       const onEnd = () => {
         cleanup();
-        resolve(data);
+        resolve(Buffer.concat(chunks).toString('utf8'));
       };
 
       const onError = () => {

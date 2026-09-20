@@ -81,7 +81,6 @@ export class GitClient {
     branch = 'main',
   ): Promise<string | null> {
     try {
-      this.repairStaleLocks(cwd);
       const result = await this.execGit(['ls-remote', remote, `refs/heads/${branch}`], cwd, {
         timeoutMs: 30000,
       });
@@ -98,7 +97,6 @@ export class GitClient {
 
   public async validateRepository(cwd: string, remote = 'origin'): Promise<void> {
     try {
-      this.repairStaleLocks(cwd);
       const isInside = await this.execGit(['rev-parse', '--is-inside-work-tree'], cwd);
       if (isInside.stdout.trim() !== 'true') {
         throw new RepositoryError(`Path '${cwd}' is not inside a valid Git working tree.`);
@@ -116,7 +114,6 @@ export class GitClient {
   }
 
   public async fetchBranch(cwd: string, remote = 'origin', branch = 'main'): Promise<void> {
-    this.repairStaleLocks(cwd);
     await this.execGit(['fetch', '--prune', remote, branch], cwd, { timeoutMs: 120000 });
   }
 
@@ -126,7 +123,6 @@ export class GitClient {
   }
 
   public async resetHard(cwd: string, targetSha: string): Promise<void> {
-    this.repairStaleLocks(cwd);
     await this.execGit(['reset', '--hard', targetSha], cwd);
   }
 

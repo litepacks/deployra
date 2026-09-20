@@ -156,8 +156,7 @@ export class DeployraDaemon {
         if (!svcName || svcAction === 'none') continue;
 
         // Don't restart service if project is currently running an active deployment
-        const activeDeps = this.deploymentRepo.getActiveDeployments(proj.name);
-        if (activeDeps.length > 0) continue;
+        if (this.deploymentRepo.hasActiveDeployments(proj.name)) continue;
 
         // Only heal if project has at least 1 successful deployment
         if (!proj.lastSuccessfulSha) continue;

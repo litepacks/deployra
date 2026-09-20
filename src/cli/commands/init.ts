@@ -22,6 +22,10 @@ watch:
   interval: 30s
 
 deploy:
+  # Strategy options: in-place | isolated | release | zero-downtime
+  strategy: in-place
+  # port: 8080           # Required when strategy: zero-downtime
+  # drainTimeout: 15s    # Optional in-flight request drain timeout for zero-downtime
   concurrency: 1
   queueMode: latest
   dirtyWorkspace: reject

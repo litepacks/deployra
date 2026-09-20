@@ -1,70 +1,82 @@
 import { redact, standardRules } from '@visulima/redact';
 
-const SECRET_PATTERNS = [
-  /bearer\s+[a-zA-Z0-9_\-.~]+(?::[a-zA-Z0-9_\-.~]+)?/gi,
-  /password\s*[:=]\s*["']?[^"'\s\n,]+["']?/gi,
-  /secret\s*[:=]\s*["']?[^"'\s\n,]+["']?/gi,
-  /token\s*[:=]\s*["']?[^"'\s\n,]+["']?/gi,
-  /api[_-]?key\s*[:=]\s*["']?[^"'\s\n,]+["']?/gi,
-  /-----BEGIN[A-Z\s]+PRIVATE KEY-----[\s\S]*?-----END[A-Z\s]+PRIVATE KEY-----/g,
-  /ghp_[a-zA-Z0-9]{36,}/g,
-  /glpat-[a-zA-Z0-9-]{20,}/g,
-  /https?:\/\/([^:]+):([^@]+)@/g, // URLs with user:password
-];
+const COMBINED_SECRET_PATTERN =
+  /(?:bearer\s+[a-zA-Z0-9_\-.~]+(?::[a-zA-Z0-9_\-.~]+)?)|(?:(?:password|secret|token|api[_-]?key)\s*[:=]\s*["']?[^"'\s\n,]+["']?)|(?:-----BEGIN[A-Z\s]+PRIVATE KEY-----[\s\S]*?-----END[A-Z\s]+PRIVATE KEY-----)|(?:ghp_[a-zA-Z0-9]{36,})|(?:glpat-[a-zA-Z0-9-]{20,})|(?:https?:\/\/[^:]+:[^@]+@)/gi;
 
 const dynamicSecrets = new Set<string>();
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+let cachedDynamicRegex: RegExp | null = null;
+
+function updateDynamicRegex(): void {
+  if (dynamicSecrets.size === 0) {
+    cachedDynamicRegex = null;
+    return;
+  }
+  const sorted = Array.from(dynamicSecrets).sort((a, b) => b.length - a.length);
+  const pattern = sorted.map(escapeRegex).join('|');
+  cachedDynamicRegex = new RegExp(pattern, 'g');
+}
 
 export function registerSecret(secret: string): void {
   if (secret && typeof secret === 'string' && secret.trim().length >= 4) {
     dynamicSecrets.add(secret.trim());
+    updateDynamicRegex();
   }
 }
 
 export function registerSecrets(secrets: string[] | Record<string, string>): void {
+  let changed = false;
   if (Array.isArray(secrets)) {
     for (const s of secrets) {
-      registerSecret(s);
+      if (s && typeof s === 'string' && s.trim().length >= 4) {
+        dynamicSecrets.add(s.trim());
+        changed = true;
+      }
     }
   } else if (secrets && typeof secrets === 'object') {
     for (const val of Object.values(secrets)) {
-      if (typeof val === 'string') {
-        registerSecret(val);
+      if (val && typeof val === 'string' && val.trim().length >= 4) {
+        dynamicSecrets.add(val.trim());
+        changed = true;
       }
     }
+  }
+  if (changed) {
+    updateDynamicRegex();
   }
 }
 
 export function clearRegisteredSecrets(): void {
   dynamicSecrets.clear();
+  cachedDynamicRegex = null;
 }
 
 export function maskSecrets(input: string): string {
-  if (!input) return input;
+  if (!input || typeof input !== 'string') return input;
   let masked = input;
 
-  // Mask registered dynamic secrets (values from .env or config.env)
-  for (const secret of dynamicSecrets) {
-    if (masked.includes(secret)) {
-      masked = masked.split(secret).join('[REDACTED]');
-    }
+  // 1. Mask registered dynamic secrets in a single pass via compiled regex
+  if (cachedDynamicRegex) {
+    masked = masked.replace(cachedDynamicRegex, '[REDACTED]');
   }
 
-  // Mask specific credential patterns
-  for (const pattern of SECRET_PATTERNS) {
-    masked = masked.replace(pattern, (match) => {
-      if (match.startsWith('http://') || match.startsWith('https://')) {
-        return match.replace(/:\/\/([^:]+):([^@]+)@/, '://***:***@');
-      }
-      if (match.includes('PRIVATE KEY')) {
-        return '[REDACTED PRIVATE KEY]';
-      }
-      const parts = match.split(/[:=]/);
-      if (parts.length > 1) {
-        return `${parts[0]}: [REDACTED]`;
-      }
-      return '[REDACTED SECRET]';
-    });
-  }
+  // 2. Mask credential patterns in a single combined pass
+  masked = masked.replace(COMBINED_SECRET_PATTERN, (match) => {
+    if (match.startsWith('http://') || match.startsWith('https://')) {
+      return match.replace(/:\/\/([^:]+):([^@]+)@/, '://***:***@');
+    }
+    if (match.includes('PRIVATE KEY')) {
+      return '[REDACTED PRIVATE KEY]';
+    }
+    const parts = match.split(/[:=]/);
+    if (parts.length > 1) {
+      return `${parts[0]}: [REDACTED]`;
+    }
+    return '[REDACTED SECRET]';
+  });
 
   return masked;
 }

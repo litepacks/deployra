@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import type { DeployStrategy } from '../config/types.js';
-import { getDatabase } from './database.js';
+import { getDatabase, getPreparedStatement } from './database.js';
 
 export type DeploymentStatus =
   | 'queued'
@@ -93,41 +93,59 @@ export class DeploymentRepository {
     const id = data.id || `dep_${nanoid(10)}`;
     const createdAt = Date.now();
     const status = data.status || 'queued';
-
-    db.prepare(`
-      INSERT INTO deployments (id, project_name, previous_sha, target_sha, status, trigger_type, dry_run, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      data.projectName,
-      data.previousSha || null,
-      data.targetSha,
-      status,
-      data.triggerType,
-      data.dryRun ? 1 : 0,
-      createdAt,
-    );
-
     const defaultSteps = data.steps || computeDeploymentSteps();
 
-    const insertStep = db.prepare(`
+    const insertDep = getPreparedStatement(`
+      INSERT INTO deployments (id, project_name, previous_sha, target_sha, status, trigger_type, dry_run, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertStep = getPreparedStatement(`
       INSERT INTO deployment_steps (id, deployment_id, step_name, status)
       VALUES (?, ?, ?, 'pending')
     `);
 
-    for (const stepName of defaultSteps) {
-      insertStep.run(`${id}_${stepName}`, id, stepName);
-    }
+    const createTx = db.transaction(() => {
+      insertDep.run(
+        id,
+        data.projectName,
+        data.previousSha || null,
+        data.targetSha,
+        status,
+        data.triggerType,
+        data.dryRun ? 1 : 0,
+        createdAt,
+      );
 
-    return this.getDeployment(id)!;
+      for (const stepName of defaultSteps) {
+        insertStep.run(`${id}_${stepName}`, id, stepName);
+      }
+    });
+
+    createTx();
+    return {
+      id,
+      projectName: data.projectName,
+      previousSha: data.previousSha || undefined,
+      targetSha: data.targetSha,
+      status,
+      triggerType: data.triggerType,
+      dryRun: Boolean(data.dryRun),
+      createdAt,
+      steps: defaultSteps.map((s) => ({
+        id: `${id}_${s}`,
+        deploymentId: id,
+        stepName: s,
+        status: 'pending',
+      })),
+    };
   }
 
   public updateStatus(id: string, status: DeploymentStatus, error?: string): void {
-    const db = getDatabase();
     const now = Date.now();
 
     if (status === 'running') {
-      db.prepare(`UPDATE deployments SET status = ?, started_at = ? WHERE id = ?`).run(
+      getPreparedStatement(`UPDATE deployments SET status = ?, started_at = ? WHERE id = ?`).run(
         status,
         now,
         id,
@@ -135,14 +153,11 @@ export class DeploymentRepository {
     } else if (
       ['success', 'failed', 'cancelled', 'rolled_back', 'rollback_failed'].includes(status)
     ) {
-      db.prepare(`UPDATE deployments SET status = ?, completed_at = ?, error = ? WHERE id = ?`).run(
-        status,
-        now,
-        error || null,
-        id,
-      );
+      getPreparedStatement(
+        `UPDATE deployments SET status = ?, completed_at = ?, error = ? WHERE id = ?`,
+      ).run(status, now, error || null, id);
     } else {
-      db.prepare(`UPDATE deployments SET status = ?, error = ? WHERE id = ?`).run(
+      getPreparedStatement(`UPDATE deployments SET status = ?, error = ? WHERE id = ?`).run(
         status,
         error || null,
         id,
@@ -163,18 +178,9 @@ export class DeploymentRepository {
       error?: string;
     },
   ): void {
-    const db = getDatabase();
     const stepId = `${deploymentId}_${stepName}`;
 
-    const exists = db.prepare('SELECT id FROM deployment_steps WHERE id = ?').get(stepId);
-    if (!exists) {
-      db.prepare(`
-        INSERT INTO deployment_steps (id, deployment_id, step_name, status)
-        VALUES (?, ?, ?, 'pending')
-      `).run(stepId, deploymentId, stepName);
-    }
-
-    db.prepare(`
+    const updateStmt = getPreparedStatement(`
       UPDATE deployment_steps
       SET status = ?,
           started_at = COALESCE(?, started_at),
@@ -184,7 +190,9 @@ export class DeploymentRepository {
           output = COALESCE(?, output),
           error = ?
       WHERE id = ?
-    `).run(
+    `);
+
+    const res = updateStmt.run(
       update.status,
       update.startedAt || null,
       update.completedAt || null,
@@ -194,24 +202,54 @@ export class DeploymentRepository {
       update.error || null,
       stepId,
     );
+
+    if (res.changes === 0) {
+      getPreparedStatement(`
+        INSERT INTO deployment_steps (id, deployment_id, step_name, status)
+        VALUES (?, ?, ?, 'pending')
+      `).run(stepId, deploymentId, stepName);
+
+      updateStmt.run(
+        update.status,
+        update.startedAt || null,
+        update.completedAt || null,
+        update.duration || null,
+        update.exitCode !== undefined ? update.exitCode : null,
+        update.output || null,
+        update.error || null,
+        stepId,
+      );
+    }
   }
 
   public updateReadyCheckResult(id: string, result: any): void {
-    const db = getDatabase();
-    db.prepare(`UPDATE deployments SET ready_check_json = ? WHERE id = ?`).run(
+    getPreparedStatement(`UPDATE deployments SET ready_check_json = ? WHERE id = ?`).run(
       JSON.stringify(result),
       id,
     );
   }
 
+  public getDeploymentStatus(id: string): DeploymentStatus | null {
+    const row = getPreparedStatement(`SELECT status FROM deployments WHERE id = ?`).get(id) as
+      | { status: DeploymentStatus }
+      | undefined;
+    return row ? row.status : null;
+  }
+
+  public getDeploymentStartedAt(id: string): number | undefined {
+    const row = getPreparedStatement(`SELECT started_at FROM deployments WHERE id = ?`).get(id) as
+      | { started_at: number | null }
+      | undefined;
+    return row?.started_at || undefined;
+  }
+
   public getDeployment(id: string): DeploymentRecord | null {
-    const db = getDatabase();
-    const row = db.prepare(`SELECT * FROM deployments WHERE id = ?`).get(id) as any;
+    const row = getPreparedStatement(`SELECT * FROM deployments WHERE id = ?`).get(id) as any;
     if (!row) return null;
 
-    const stepRows = db
-      .prepare(`SELECT * FROM deployment_steps WHERE deployment_id = ? ORDER BY rowid ASC`)
-      .all(id) as any[];
+    const stepRows = getPreparedStatement(
+      `SELECT * FROM deployment_steps WHERE deployment_id = ? ORDER BY rowid ASC`,
+    ).all(id) as any[];
 
     const steps: DeploymentStep[] = stepRows.map((s) => ({
       id: s.id,
@@ -294,23 +332,31 @@ export class DeploymentRepository {
   }
 
   public getLatestDeployment(projectName: string): DeploymentRecord | null {
-    const db = getDatabase();
-    const row = db
-      .prepare(
-        `SELECT * FROM deployments WHERE project_name = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
-      )
-      .get(projectName) as any;
+    const row = getPreparedStatement(
+      `SELECT * FROM deployments WHERE project_name = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+    ).get(projectName) as any;
     return row ? this.hydrateDeployments([row])[0] : null;
   }
 
   public getDeploymentsByProject(projectName: string, limit = 20): DeploymentRecord[] {
-    const db = getDatabase();
-    const rows = db
-      .prepare(
-        `SELECT * FROM deployments WHERE project_name = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
-      )
-      .all(projectName, limit) as any[];
+    const rows = getPreparedStatement(
+      `SELECT * FROM deployments WHERE project_name = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+    ).all(projectName, limit) as any[];
     return this.hydrateDeployments(rows);
+  }
+
+  public countRecentFailures(projectName: string, targetSha: string, limit = 10): number {
+    const rows = getPreparedStatement(
+      `SELECT target_sha, status FROM deployments WHERE project_name = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+    ).all(projectName, limit) as Array<{ target_sha: string; status: string }>;
+
+    return rows.filter(
+      (d) =>
+        (d.target_sha === targetSha ||
+          d.target_sha.startsWith(targetSha) ||
+          targetSha.startsWith(d.target_sha)) &&
+        ['failed', 'rolled_back', 'rollback_failed'].includes(d.status),
+    ).length;
   }
 
   public getActiveDeployments(projectName?: string): DeploymentRecord[] {
@@ -325,6 +371,58 @@ export class DeploymentRepository {
 
     const rows = db.prepare(query).all(...params) as any[];
     return this.hydrateDeployments(rows);
+  }
+
+  public hasActiveDeployments(projectName?: string): boolean {
+    let query = `SELECT 1 FROM deployments WHERE status IN ('queued', 'running', 'rolling_back')`;
+    const params: any[] = [];
+    if (projectName) {
+      query += ` AND project_name = ?`;
+      params.push(projectName);
+    }
+    query += ` LIMIT 1`;
+    const row = getPreparedStatement(query).get(...params);
+    return Boolean(row);
+  }
+
+  public getActiveDeploymentSummaries(
+    projectName?: string,
+  ): Array<{ id: string; status: DeploymentStatus; targetSha: string }> {
+    let query = `SELECT id, status, target_sha as targetSha FROM deployments WHERE status IN ('queued', 'running', 'rolling_back')`;
+    const params: any[] = [];
+    if (projectName) {
+      query += ` AND project_name = ?`;
+      params.push(projectName);
+    }
+    query += ` ORDER BY created_at ASC`;
+    return getPreparedStatement(query).all(...params) as Array<{
+      id: string;
+      status: DeploymentStatus;
+      targetSha: string;
+    }>;
+  }
+
+  public cancelPendingDeployments(
+    projectName: string,
+    reason: string,
+  ): Array<{ id: string; status: DeploymentStatus }> {
+    const active = this.getActiveDeploymentSummaries(projectName).filter(
+      (d) => d.status === 'queued' || d.status === 'running',
+    );
+    if (active.length === 0) return [];
+
+    const now = Date.now();
+    const updateStmt = getPreparedStatement(
+      `UPDATE deployments SET status = 'cancelled', completed_at = ?, error = ? WHERE id = ?`,
+    );
+    const db = getDatabase();
+    db.transaction(() => {
+      for (const dep of active) {
+        updateStmt.run(now, reason, dep.id);
+      }
+    })();
+
+    return active;
   }
 
   public getStats(projectName?: string): {
