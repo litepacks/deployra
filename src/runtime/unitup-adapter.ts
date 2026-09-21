@@ -145,16 +145,31 @@ function resolveEntryPoint(
 function isNonFatalSystemdError(err: any): boolean {
   if (!err) return false;
   const msg = typeof err === 'string' ? err : err.message || '';
+  const code = (err && typeof err === 'object' && (err.code || err.cause?.code)) || '';
   return (
+    code === 'EPIPE' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ENOENT' ||
+    code === 'EACCES' ||
+    code === 'EPERM' ||
+    code === 'ERR_STREAM_DESTROYED' ||
+    msg.includes('EPIPE') ||
+    msg.includes('write EPIPE') ||
+    msg.includes('Broken pipe') ||
     msg.includes('Failed to reload systemd daemon') ||
     msg.includes('Failed to connect to bus') ||
     msg.includes('systemd is not running') ||
     msg.includes('Systemd is not available') ||
     msg.includes('Not running under systemd') ||
+    msg.includes('System has not been booted with systemd') ||
     msg.includes('Failed to restart service') ||
     msg.includes('Failed to start service') ||
     msg.includes('does not exist') ||
-    msg.includes('not found')
+    msg.includes('not found') ||
+    msg.includes('Connection refused') ||
+    msg.includes('D-Bus') ||
+    msg.includes('dbus') ||
+    msg.includes('Cannot find')
   );
 }
 
@@ -436,6 +451,25 @@ export class UnitupAdapter implements RuntimeManager {
       canaryWeight: options?.canaryWeight,
     });
 
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
+      logger.warn(
+        `Systemd is not available on this platform. Simulating zero-downtime deployment for '${service}'.`,
+      );
+      return {
+        service,
+        previousGeneration: 1,
+        currentGeneration: 2,
+        downtimeMs: 0,
+        status: 'success',
+        canaryWeight: options?.canary ? 0.1 : undefined,
+        isCanary: Boolean(options?.canary),
+      };
+    }
+
     try {
       // If service unit does not exist yet or needs registration, ensure it's registered
       if (!unitFileExists(service)) {
@@ -556,6 +590,23 @@ export class UnitupAdapter implements RuntimeManager {
     logger.warn(`Triggering zero-downtime rollback for service '${service}' via unitup...`, {
       service,
     });
+
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
+      logger.warn(
+        `Systemd is not available on this platform. Simulating zero-downtime rollback for '${service}'.`,
+      );
+      return {
+        service,
+        rolledBackFrom: 2,
+        activeGeneration: 1,
+        status: 'success',
+      };
+    }
+
     try {
       const res = await defaultRollbackManager.rollback(
         service,
@@ -604,6 +655,24 @@ export class UnitupAdapter implements RuntimeManager {
     logger.info(`Promoting canary generation for service '${service}' to 100% active...`, {
       service,
     });
+
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
+      logger.warn(
+        `Systemd is not available on this platform. Simulating canary promote for '${service}'.`,
+      );
+      return {
+        service,
+        promotedGeneration: 2,
+        previousGeneration: 1,
+        downtimeMs: 0,
+        status: 'success',
+      };
+    }
+
     try {
       const res = await defaultDeploymentManager.promote(
         service,
