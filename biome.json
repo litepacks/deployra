@@ -7,7 +7,18 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!dist", "!coverage", "!node_modules", "!package-lock.json"]
+    "includes": [
+      "**",
+      "!dist",
+      "!dist-docs",
+      "!coverage",
+      "!node_modules",
+      "!.litepacks-release-tools",
+      "!.docboot",
+      "!.kiremit",
+      "!.github",
+      "!package-lock.json"
+    ]
   },
   "formatter": {
     "enabled": true,
