@@ -506,13 +506,15 @@ export class UnitupAdapter implements RuntimeManager {
       };
 
       const deployOpts: Record<string, unknown> = {
+        ...svcConfig,
+        port: undefined, // CRITICAL: deployOpts is passed to Unitup create() where options.port is the internal child port. Must remain undefined so Unitup allocates a free internal port!
         publicPort: options?.publicPort,
         readyPath: options?.readyPath,
+        readinessTimeout: options?.readinessTimeout,
         drainTimeout: options?.drainTimeout,
         canary: Boolean(options?.canary),
         canaryWeight: options?.canaryWeight,
         weight: options?.canaryWeight,
-        ...svcConfig,
         onProgress: (evt: any) => {
           if (options?.onProgress) {
             options.onProgress(evt);

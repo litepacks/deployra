@@ -626,6 +626,7 @@ export class DeploymentPipelineRunner {
         command: config.deploy.service.command,
         publicPort: config.deploy.port || config.deploy.service.port,
         readyPath,
+        readinessTimeout: config.deploy.ready?.timeoutMs,
         drainTimeout: config.deploy.drainTimeoutMs,
         canary: canaryEnabled,
         canaryWeight,

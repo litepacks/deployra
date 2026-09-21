@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { defaultDeploymentManager } from 'unitup';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeAndValidateConfig } from '../src/config/schema.js';
 import { DeploymentPipelineRunner } from '../src/pipeline/pipeline-runner.js';
@@ -18,10 +19,26 @@ describe('Unitup Zero-Downtime Deployment Subsystem for Deployra', () => {
     process.env.DEPLOYRA_DB_PATH = path.join(tmpDir, 'deployra.db');
     process.env.WORKMATIC_DB_PATH = path.join(tmpDir, 'workmatic.db');
     resetDatabase();
+    try {
+      defaultDeploymentManager.router.activeBackends.clear();
+      defaultDeploymentManager.router.canaryBackends.clear();
+      defaultDeploymentManager.router.inFlightRequests.clear();
+    } catch {}
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     closeDatabase();
+    try {
+      await defaultDeploymentManager.router.close();
+      defaultDeploymentManager.router.activeBackends.clear();
+      defaultDeploymentManager.router.canaryBackends.clear();
+      defaultDeploymentManager.router.inFlightRequests.clear();
+    } catch {}
+    try {
+      for (const [pid] of defaultDeploymentManager.processManager.processes) {
+        await defaultDeploymentManager.processManager.stop(pid, { timeout: 500 });
+      }
+    } catch {}
     if (fs.existsSync(tmpDir)) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

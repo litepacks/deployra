@@ -27,6 +27,7 @@ export interface ZeroDowntimeOptions {
   script?: string;
   publicPort?: number;
   readyPath?: string;
+  readinessTimeout?: number;
   drainTimeout?: number;
   canary?: boolean;
   canaryWeight?: number | string;
