@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { defaultDeploymentManager } from 'unitup';
+import { defaultDeploymentManager, defaultRollbackManager } from 'unitup';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeAndValidateConfig } from '../src/config/schema.js';
 import { DeploymentPipelineRunner } from '../src/pipeline/pipeline-runner.js';
@@ -13,30 +13,52 @@ import { ProjectRepository } from '../src/storage/project-repository.js';
 
 describe('Unitup Zero-Downtime Deployment Subsystem for Deployra', () => {
   let tmpDir: string;
+  let originalXdg: string | undefined;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deployra-zd-test-'));
     process.env.DEPLOYRA_DB_PATH = path.join(tmpDir, 'deployra.db');
     process.env.WORKMATIC_DB_PATH = path.join(tmpDir, 'workmatic.db');
+    originalXdg = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = tmpDir;
     resetDatabase();
     try {
       defaultDeploymentManager.router.activeBackends.clear();
       defaultDeploymentManager.router.canaryBackends.clear();
       defaultDeploymentManager.router.inFlightRequests.clear();
+      (defaultDeploymentManager as any).generationManager?.cache?.clear();
+      defaultRollbackManager.router.activeBackends.clear();
+      defaultRollbackManager.router.canaryBackends.clear();
+      defaultRollbackManager.router.inFlightRequests.clear();
+      (defaultRollbackManager as any).generationManager?.cache?.clear();
     } catch {}
   });
 
   afterEach(async () => {
     closeDatabase();
+    if (originalXdg === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = originalXdg;
+    }
     try {
       await defaultDeploymentManager.router.close();
       defaultDeploymentManager.router.activeBackends.clear();
       defaultDeploymentManager.router.canaryBackends.clear();
       defaultDeploymentManager.router.inFlightRequests.clear();
+      (defaultDeploymentManager as any).generationManager?.cache?.clear();
+      await defaultRollbackManager.router.close();
+      defaultRollbackManager.router.activeBackends.clear();
+      defaultRollbackManager.router.canaryBackends.clear();
+      defaultRollbackManager.router.inFlightRequests.clear();
+      (defaultRollbackManager as any).generationManager?.cache?.clear();
     } catch {}
     try {
       for (const [pid] of defaultDeploymentManager.processManager.processes) {
         await defaultDeploymentManager.processManager.stop(pid, { timeout: 500 });
+      }
+      for (const [pid] of (defaultRollbackManager as any).processManager?.processes || []) {
+        await (defaultRollbackManager as any).processManager.stop(pid, { timeout: 500 });
       }
     } catch {}
     if (fs.existsSync(tmpDir)) {

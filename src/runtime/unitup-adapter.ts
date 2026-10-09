@@ -617,6 +617,7 @@ export class UnitupAdapter implements RuntimeManager {
           readyPath: options?.readyPath,
           drainTimeout: options?.drainTimeout,
           onProgress: options?.onProgress,
+          lockTimeout: 5000,
         },
       );
       return {
@@ -626,8 +627,15 @@ export class UnitupAdapter implements RuntimeManager {
         status: res.status,
       };
     } catch (err: any) {
-      if (err.message?.includes('No previous generation available')) {
-        logger.warn(`No previous generation available for zero-downtime rollback of '${service}'.`);
+      if (
+        err.message?.includes('No previous generation available') ||
+        err.message?.includes('is no longer running and cannot be rolled back to') ||
+        err.message?.includes('failed readiness verification') ||
+        err.message?.includes('Lock timed out')
+      ) {
+        logger.warn(
+          `No viable previous generation available for zero-downtime rollback of '${service}' (${err.message}).`,
+        );
         return {
           service,
           rolledBackFrom: null,
@@ -683,6 +691,7 @@ export class UnitupAdapter implements RuntimeManager {
           readyPath: options?.readyPath,
           drainTimeout: options?.drainTimeout,
           onProgress: options?.onProgress,
+          lockTimeout: 5000,
         },
       );
       return {
@@ -693,8 +702,15 @@ export class UnitupAdapter implements RuntimeManager {
         status: res.status,
       };
     } catch (err: any) {
-      if (err.message?.includes('No canary generation found')) {
-        logger.warn(`No canary generation found for service '${service}' to promote.`);
+      if (
+        err.message?.includes('No canary generation found') ||
+        err.message?.includes('is no longer running') ||
+        err.message?.includes('Lock timed out') ||
+        err.message?.includes('timed out')
+      ) {
+        logger.warn(
+          `No canary generation found for service '${service}' to promote (${err.message}).`,
+        );
         return {
           service,
           promotedGeneration: 1,
