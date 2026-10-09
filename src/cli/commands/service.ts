@@ -5,6 +5,7 @@ import Table from 'cli-table3';
 import { createService, removeService } from 'unitup';
 import { UnitupAdapter } from '../../runtime/unitup-adapter.js';
 import { safeExec } from '../../security/exec.js';
+import { isRootUser } from '../../security/path-validator.js';
 
 export function printServiceHelp(): void {
   console.log(chalk.bold('\n⚙  Deployra Daemon Service Management\n'));
@@ -83,28 +84,46 @@ export async function serviceCommand(
         const scriptPath =
           rawScript && fs.existsSync(rawScript) ? path.resolve(rawScript) : undefined;
 
-        if (scriptPath) {
-          await createService({
-            name: serviceName,
-            command: process.execPath,
-            args: [scriptPath, 'watch'],
-            cwd: process.cwd(),
-            restart: 'always',
-            force: true,
-          });
-        } else {
-          await createService({
-            name: serviceName,
-            command: 'deployra',
-            args: ['watch'],
-            cwd: process.cwd(),
-            restart: 'always',
-            force: true,
-          });
+        const isRoot = isRootUser();
+        const serviceEnv: Record<string, string> = {};
+        if (isRoot) {
+          serviceEnv.DEPLOYRA_ALLOW_ROOT = 'true';
+        }
+
+        const serviceOpts = {
+          name: serviceName,
+          command: scriptPath ? process.execPath : 'deployra',
+          args: scriptPath ? [scriptPath, 'watch'] : ['watch'],
+          cwd: process.cwd(),
+          restart: 'always' as const,
+          force: true,
+          env: Object.keys(serviceEnv).length > 0 ? serviceEnv : undefined,
+        };
+
+        try {
+          await createService(serviceOpts);
+        } catch (err: any) {
+          if (
+            process.platform !== 'linux' ||
+            err.message?.includes('Failed to reload systemd daemon') ||
+            err.message?.includes('systemd is not running')
+          ) {
+            // Non-fatal if systemd daemon is not actively running (e.g. macOS or container)
+          } else {
+            throw err;
+          }
         }
         console.log(
           chalk.green(`✔ Installed systemd service '${serviceName}' via Unitup (Restart=always).`),
         );
+
+        if (isRoot) {
+          console.log(
+            chalk.cyan(
+              `ℹ Root User Detected: Configured DEPLOYRA_ALLOW_ROOT=true in systemd unit so daemon starts without root privilege errors.`,
+            ),
+          );
+        }
 
         // Enable user lingering on Linux so service starts automatically on system reboot without SSH login
         const lingerResult = await tryEnableLinger();

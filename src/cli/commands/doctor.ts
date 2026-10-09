@@ -1,12 +1,16 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import chalk from 'chalk';
 import { loadConfig } from '../../config/parser.js';
 import { UnitupAdapter } from '../../runtime/unitup-adapter.js';
 import { safeExec } from '../../security/exec.js';
+import { isRootUser } from '../../security/path-validator.js';
 import { getDatabasePath } from '../../storage/database.js';
 
-export async function doctorCommand(configPath?: string): Promise<void> {
+export async function doctorCommand(
+  configPath?: string,
+): Promise<{ passed: number; failed: number }> {
   console.log(chalk.bold('\n🔍 Running Deployra System Diagnostics...\n'));
 
   let checksPassed = 0;
@@ -75,7 +79,58 @@ export async function doctorCommand(configPath?: string): Promise<void> {
     }
   }
 
-  // 4. Project Config Check (if provided or present)
+  // 4. Root Privilege & Execution Safety Check
+  const rootActive = isRootUser();
+  const allowRootEnv = process.env.DEPLOYRA_ALLOW_ROOT === 'true';
+
+  if (!rootActive) {
+    report('Process privilege safety', true, 'Running as non-root user (recommended)');
+  } else if (allowRootEnv) {
+    report(
+      'Process privilege safety',
+      true,
+      'Running as root (DEPLOYRA_ALLOW_ROOT=true override active)',
+    );
+  } else {
+    report(
+      'Process privilege safety',
+      false,
+      'Running directly as root without DEPLOYRA_ALLOW_ROOT=true. Daemon will fail to start. Switch to a non-root user or export DEPLOYRA_ALLOW_ROOT=true',
+    );
+  }
+
+  // 5. Systemd Daemon Service Configuration Check (Linux / User service)
+  if (process.platform === 'linux' || process.env.NODE_ENV === 'test') {
+    const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+    const unitPath = path.join(configHome, 'systemd', 'user', 'unitup-deployra-daemon.service');
+    if (fs.existsSync(unitPath)) {
+      try {
+        const unitContent = fs.readFileSync(unitPath, 'utf8');
+        if (rootActive) {
+          const hasAllowRootInUnit = /DEPLOYRA_ALLOW_ROOT=["']?true["']?/i.test(unitContent);
+          if (hasAllowRootInUnit) {
+            report(
+              'Deployra daemon service root configuration',
+              true,
+              'DEPLOYRA_ALLOW_ROOT=true is configured in service unit',
+            );
+          } else {
+            report(
+              'Deployra daemon service root configuration',
+              false,
+              `Service '${unitPath}' is missing Environment="DEPLOYRA_ALLOW_ROOT=true". Service will fail on startup as root. Reinstall via 'deployra service install' or add Environment="DEPLOYRA_ALLOW_ROOT=true" to unit.`,
+            );
+          }
+        } else {
+          report('Deployra daemon service unit found', true, unitPath);
+        }
+      } catch (err: any) {
+        report('Deployra daemon service check', false, err.message);
+      }
+    }
+  }
+
+  // 6. Project Config Check (if provided or present)
   try {
     const config = loadConfig(configPath);
     report(
@@ -118,4 +173,6 @@ export async function doctorCommand(configPath?: string): Promise<void> {
   console.log(
     `\n${chalk.bold('Summary:')} ${chalk.green(`${checksPassed} passed`)}, ${checksFailed > 0 ? chalk.red(`${checksFailed} failed`) : chalk.gray('0 failed')}\n`,
   );
+
+  return { passed: checksPassed, failed: checksFailed };
 }
