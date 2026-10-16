@@ -63,6 +63,11 @@ export function resetDatabase(): void {
 export function vacuumDatabase(): void {
   const db = getDatabase();
   try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch {
+    // Ignore checkpoint error on in-memory or uninitialized DB
+  }
+  try {
     db.exec('VACUUM;');
   } catch {
     // Ignore vacuum error on in-memory DB or active lock

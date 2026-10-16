@@ -1,8 +1,28 @@
 import chalk from 'chalk';
 import { maskSecrets } from './masker.js';
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
 export type LogFormat = 'pretty' | 'json' | 'jsonl';
+
+export const LOG_LEVEL_PRIORITIES: Record<LogLevel, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+  silent: 4,
+};
+
+function resolveDefaultLogLevel(): LogLevel {
+  const envLevel = process.env.LOG_LEVEL?.toLowerCase() as LogLevel | undefined;
+  if (envLevel && envLevel in LOG_LEVEL_PRIORITIES) {
+    return envLevel;
+  }
+  if (process.env.DEBUG === 'true' || process.env.DEBUG === '1') {
+    return 'debug';
+  }
+  // Default to 'info' in systemd or standard daemon environments to prevent journal log flooding
+  return 'info';
+}
 
 export interface LogEntry {
   timestamp: string;
@@ -17,16 +37,32 @@ export interface LogEntry {
 
 export class Logger {
   private format: LogFormat;
+  private level: LogLevel;
 
-  constructor(format: LogFormat = 'pretty') {
+  constructor(format: LogFormat = 'pretty', level?: LogLevel) {
     this.format = format;
+    this.level = level || resolveDefaultLogLevel();
   }
 
   public setFormat(format: LogFormat): void {
     this.format = format;
   }
 
+  public setLevel(level: LogLevel): void {
+    this.level = level;
+  }
+
+  public getLevel(): LogLevel {
+    return this.level;
+  }
+
   public log(entry: Omit<LogEntry, 'timestamp'>): void {
+    const currentPriority = LOG_LEVEL_PRIORITIES[this.level] ?? 1;
+    const entryPriority = LOG_LEVEL_PRIORITIES[entry.level] ?? 1;
+    if (entryPriority < currentPriority) {
+      return;
+    }
+
     const timestamp = new Date().toISOString();
     const fullEntry: LogEntry = {
       level: entry.level,
@@ -64,6 +100,9 @@ export class Logger {
         break;
       case 'error':
         levelStr = chalk.red('[ERROR]');
+        break;
+      default:
+        levelStr = chalk.gray(`[${entry.level.toUpperCase()}]`);
         break;
     }
 

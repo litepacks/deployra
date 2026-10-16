@@ -8,6 +8,12 @@ import { logger } from '../logging/logger.js';
 import { computeDeploymentSteps, DeploymentRepository } from '../storage/deployment-repository.js';
 import { ProjectRepository, type StoredProject } from '../storage/project-repository.js';
 
+interface InFlightCheck {
+  startTime: number;
+  abortController: AbortController;
+  timeoutTimer?: NodeJS.Timeout;
+}
+
 export class SourceWatcher {
   private gitClient = new GitClient();
   private projectRepo = new ProjectRepository();
@@ -16,19 +22,22 @@ export class SourceWatcher {
 
   private timers = new Map<string, NodeJS.Timeout>();
   private errorCounts = new Map<string, number>();
-  private checkingProjects = new Set<string>();
+  private checkingProjects = new Map<string, InFlightCheck>();
   private lastCheckTimestamps = new Map<string, number>();
+  private lastConcurrentCheckLogTimestamps = new Map<string, number>();
   private configMtimes = new Map<string, { filePath: string; mtimeMs: number }>();
 
   private syncTimer?: NodeJS.Timeout;
   private targetProjectName?: string;
   private isDryRun = false;
+  private isStopped = false;
 
   constructor(workmaticEngine: WorkmaticEngine) {
     this.workmaticEngine = workmaticEngine;
   }
 
   public async start(targetProjectName?: string, dryRun = false): Promise<void> {
+    this.isStopped = false;
     this.targetProjectName = targetProjectName;
     this.isDryRun = dryRun;
     await this.syncProjects();
@@ -42,6 +51,7 @@ export class SourceWatcher {
   }
 
   public async stop(): Promise<void> {
+    this.isStopped = true;
     if (this.syncTimer) {
       clearInterval(this.syncTimer);
       this.syncTimer = undefined;
@@ -52,12 +62,21 @@ export class SourceWatcher {
     }
     this.timers.clear();
     this.errorCounts.clear();
+
+    for (const [name, inFlight] of this.checkingProjects.entries()) {
+      if (inFlight.timeoutTimer) {
+        clearTimeout(inFlight.timeoutTimer);
+      }
+      inFlight.abortController.abort(new Error(`Watcher stopped for project '${name}'`));
+    }
     this.checkingProjects.clear();
     this.lastCheckTimestamps.clear();
     this.configMtimes.clear();
+    this.lastConcurrentCheckLogTimestamps.clear();
   }
 
   public async syncProjects(): Promise<void> {
+    if (this.isStopped) return;
     const allProjects = this.targetProjectName
       ? ([this.projectRepo.getProject(this.targetProjectName)].filter(Boolean) as StoredProject[])
       : this.projectRepo.getAllProjects();
@@ -71,9 +90,15 @@ export class SourceWatcher {
         clearTimeout(timer);
         this.timers.delete(name);
         this.errorCounts.delete(name);
+        const inFlight = this.checkingProjects.get(name);
+        if (inFlight?.timeoutTimer) {
+          clearTimeout(inFlight.timeoutTimer);
+        }
+        inFlight?.abortController.abort();
         this.checkingProjects.delete(name);
         this.lastCheckTimestamps.delete(name);
         this.configMtimes.delete(name);
+        this.lastConcurrentCheckLogTimestamps.delete(name);
         logger.info(`Stopped monitoring removed project '${name}'`, { project: name });
       }
     }
@@ -84,6 +109,39 @@ export class SourceWatcher {
       const existingTimer = this.timers.get(proj.name);
       const lastCheck = this.lastCheckTimestamps.get(proj.name) || 0;
       const expectedInterval = proj.config.watch.intervalMs || 10000;
+      const inFlight = this.checkingProjects.get(proj.name);
+
+      // A. Zombie Process & Check Timeout: Eğer bir in-flight kontrol 45 saniyeyi aşmışsa
+      if (inFlight) {
+        const checkDuration = now - inFlight.startTime;
+        if (checkDuration > 45000) {
+          logger.error(
+            `[ZOMBIE-CHECK] Check for project '${proj.name}' was stuck for ${Math.round(checkDuration / 1000)}s (> 45s). Forcibly terminating stuck process tree, resetting lock, and backing off.`,
+            { project: proj.name },
+          );
+          if (inFlight.timeoutTimer) {
+            clearTimeout(inFlight.timeoutTimer);
+          }
+          inFlight.abortController.abort(
+            new Error(`Check for project '${proj.name}' exceeded 45s zombie timeout`),
+          );
+          this.checkingProjects.delete(proj.name);
+          this.lastCheckTimestamps.set(proj.name, now);
+
+          const count = (this.errorCounts.get(proj.name) || 0) + 1;
+          this.errorCounts.set(proj.name, count);
+
+          if (existingTimer) {
+            clearTimeout(existingTimer);
+            this.timers.delete(proj.name);
+          }
+          this.scheduleNextCheck(proj.name, count);
+        }
+        // In-flight kontrol devam ederken ASLA yeni bir check tetiklenmemelidir!
+        continue;
+      }
+
+      // B. In-flight değilse: Stalled kontrolü
       const isStalled = lastCheck > 0 && now - lastCheck > Math.max(expectedInterval * 4, 30000);
 
       if (!existingTimer || isStalled) {
@@ -129,10 +187,20 @@ export class SourceWatcher {
     explicitTargetSha?: string,
     canaryOptions?: { canary?: boolean; canaryWeight?: number | string },
   ): Promise<string | null> {
+    const now = Date.now();
     if (this.checkingProjects.has(projectName)) {
-      logger.debug(
-        `Check for project '${projectName}' is already in progress. Skipping concurrent check.`,
-      );
+      // Zaman damgasını güncelle: return null ile çıkılsa bile syncProjects bunu stalled sanmamalıdır!
+      this.lastCheckTimestamps.set(projectName, now);
+
+      // Throttled log: en fazla 5 dakikada (300_000ms) 1 kez logla
+      const lastLog = this.lastConcurrentCheckLogTimestamps.get(projectName) || 0;
+      if (now - lastLog >= 300000) {
+        this.lastConcurrentCheckLogTimestamps.set(projectName, now);
+        logger.debug(
+          `Check for project '${projectName}' is already in progress. Skipping concurrent check.`,
+          { project: projectName },
+        );
+      }
       return null;
     }
 
@@ -142,8 +210,24 @@ export class SourceWatcher {
       return null;
     }
 
-    this.checkingProjects.add(projectName);
-    this.lastCheckTimestamps.set(projectName, Date.now());
+    const CHECK_TIMEOUT_MS = 45000;
+    const abortController = new AbortController();
+    const timeoutTimer = setTimeout(() => {
+      logger.warn(
+        `Check for project '${projectName}' exceeded ${CHECK_TIMEOUT_MS}ms timeout. Forcibly aborting stuck process tree...`,
+        { project: projectName },
+      );
+      abortController.abort(
+        new Error(`Check for project '${projectName}' timed out after ${CHECK_TIMEOUT_MS}ms`),
+      );
+    }, CHECK_TIMEOUT_MS);
+
+    this.checkingProjects.set(projectName, {
+      startTime: now,
+      abortController,
+      timeoutTimer,
+    });
+    this.lastCheckTimestamps.set(projectName, now);
 
     try {
       // Refresh config from disk if updated (cached by mtimeMs to avoid redundant YAML reads & parses)
@@ -177,7 +261,10 @@ export class SourceWatcher {
 
       const remoteSha =
         explicitTargetSha ||
-        (await this.gitClient.checkRemoteHead(proj.path, proj.remote, proj.branch));
+        (await this.gitClient.checkRemoteHead(proj.path, proj.remote, proj.branch, {
+          timeoutMs: 30000,
+          signal: abortController.signal,
+        }));
       this.errorCounts.set(projectName, 0); // Reset error count on success
 
       if (!remoteSha) {
@@ -218,10 +305,19 @@ export class SourceWatcher {
             return null;
           }
 
+          if (latestDep.status === 'cancelled') {
+            if (proj.lastSeenSha !== remoteSha) {
+              this.projectRepo.updateLastSeenSha(projectName, remoteSha);
+            }
+            logger.debug(
+              `Latest deployment #${latestDep.id} for project '${projectName}' was cancelled. Skipping auto-retry.`,
+              { project: projectName, deploymentId: latestDep.id },
+            );
+            return null;
+          }
+
           // If latest deployment failed/rolled back, attempt self-repair retry after cooldown (up to 3 retries)
-          if (
-            ['failed', 'rolled_back', 'rollback_failed', 'cancelled'].includes(latestDep.status)
-          ) {
+          if (['failed', 'rolled_back', 'rollback_failed'].includes(latestDep.status)) {
             const depCompletedAt = latestDep.completedAt || latestDep.createdAt;
             const cooldownMs = 60000; // 60s cooldown between retries of failed commit
             const failedCount = this.countRecentFailedAttempts(projectName, remoteSha);
@@ -324,11 +420,17 @@ export class SourceWatcher {
       );
       throw err;
     } finally {
+      const inFlight = this.checkingProjects.get(projectName);
+      if (inFlight?.timeoutTimer) {
+        clearTimeout(inFlight.timeoutTimer);
+      }
       this.checkingProjects.delete(projectName);
+      this.lastCheckTimestamps.set(projectName, Date.now());
     }
   }
 
   private scheduleNextCheck(projectName: string, errorCount = 0, initialDelayMs?: number): void {
+    if (this.isStopped) return;
     let proj: StoredProject | null = null;
     try {
       proj = this.projectRepo.getProject(projectName);
@@ -336,7 +438,7 @@ export class SourceWatcher {
       // If DB read fails, retry with small delay
     }
 
-    if (!proj) {
+    if (!proj || this.isStopped) {
       this.timers.delete(projectName);
       return;
     }
@@ -357,6 +459,7 @@ export class SourceWatcher {
 
     const timer = setTimeout(async () => {
       this.timers.delete(projectName);
+      if (this.isStopped) return;
       let currentErrorCount = 0;
       try {
         await this.checkProject(projectName, 'poll', this.isDryRun);
@@ -364,14 +467,20 @@ export class SourceWatcher {
       } catch {
         currentErrorCount = this.errorCounts.get(projectName) || 1;
       } finally {
-        try {
-          this.scheduleNextCheck(projectName, currentErrorCount);
-        } catch (err: any) {
-          logger.error(`Error scheduling next check for '${projectName}': ${err.message}`);
+        if (!this.isStopped) {
+          try {
+            this.scheduleNextCheck(projectName, currentErrorCount);
+          } catch (err: any) {
+            logger.error(`Error scheduling next check for '${projectName}': ${err.message}`);
+          }
         }
       }
     }, baseInterval);
 
-    this.timers.set(projectName, timer);
+    if (!this.isStopped) {
+      this.timers.set(projectName, timer);
+    } else {
+      clearTimeout(timer);
+    }
   }
 }

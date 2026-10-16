@@ -5,7 +5,7 @@ import { DeploymentPipelineRunner } from './pipeline/pipeline-runner.js';
 import { UnitupAdapter } from './runtime/unitup-adapter.js';
 import { assertNonRootUser } from './security/path-validator.js';
 import { WebhookServer } from './server/webhook-server.js';
-import { closeDatabase } from './storage/database.js';
+import { closeDatabase, vacuumDatabase } from './storage/database.js';
 import { DeploymentRepository } from './storage/deployment-repository.js';
 import { ProjectRepository } from './storage/project-repository.js';
 import { StateRepository } from './storage/state-repository.js';
@@ -140,9 +140,10 @@ export class DeployraDaemon {
       logger.warn(`[SELF-REPAIR] Cleaned up ${staleDeps} timed-out running deployment(s)`);
     }
 
-    // 3. Auto-retention prune (keep max 100 per project or 30 days)
+    // 3. Auto-retention prune (keep max 100 per project or 30 days) and compact database
     try {
       this.deploymentRepo.pruneDeployments({ keepCount: 100, maxAgeDays: 30 });
+      vacuumDatabase();
     } catch {
       // ignore background auto-prune error
     }
@@ -163,7 +164,7 @@ export class DeployraDaemon {
 
         try {
           const status = await this.unitupAdapter.status(svcName);
-          if (!status.active) {
+          if (!status.active && status.subState !== 'query_failed') {
             logger.warn(
               `[SELF-REPAIR] Service '${svcName}' for project '${proj.name}' is down (${status.subState || 'inactive'}). Attempting auto-recovery...`,
               { project: proj.name, service: svcName },

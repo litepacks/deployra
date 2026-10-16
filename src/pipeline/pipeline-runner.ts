@@ -17,6 +17,17 @@ import { DeploymentRepository } from '../storage/deployment-repository.js';
 import { ProjectRepository } from '../storage/project-repository.js';
 import { StateRepository } from '../storage/state-repository.js';
 
+export const MAX_STEP_OUTPUT_CHARS = 250_000;
+
+export function truncateStepOutput(output: string, maxChars = MAX_STEP_OUTPUT_CHARS): string {
+  if (!output || output.length <= maxChars) {
+    return output;
+  }
+  const notice = `\n[... output truncated to last ${Math.round(maxChars / 1000)}KB ...]\n`;
+  const sliceLen = Math.max(0, maxChars - notice.length);
+  return notice + output.slice(-sliceLen);
+}
+
 export class DeploymentPipelineRunner {
   private gitClient = new GitClient();
   private unitupAdapter = new UnitupAdapter();
@@ -409,6 +420,9 @@ export class DeploymentPipelineRunner {
             err.message || 'Deployment cancelled',
           );
         }
+        if (isRelease) {
+          this.cleanupOrphanRelease(releaseDir, currentLink, deploymentId, projectName);
+        }
         logger.info(`Deployment #${deploymentId} was cancelled for project '${projectName}'.`, {
           project: projectName,
           deploymentId,
@@ -752,6 +766,43 @@ export class DeploymentPipelineRunner {
         error: err.message,
       });
     }
+
+    if (config.deploy.strategy === 'release') {
+      const releasesDir = path.join(config.deploy.workspacePath, 'releases');
+      const releaseDir = path.join(releasesDir, deploymentId);
+      const currentLink = path.join(config.deploy.workspacePath, 'current');
+      this.cleanupOrphanRelease(releaseDir, currentLink, deploymentId, projectName);
+    }
+  }
+
+  private cleanupOrphanRelease(
+    releaseDir: string,
+    currentLink: string,
+    deploymentId: string,
+    projectName: string,
+  ): void {
+    if (!fs.existsSync(releaseDir)) return;
+    try {
+      let isCurrentTarget = false;
+      if (fs.existsSync(currentLink)) {
+        try {
+          const realTarget = fs.realpathSync(currentLink);
+          const realRelease = fs.realpathSync(releaseDir);
+          isCurrentTarget = realTarget === realRelease;
+        } catch {
+          isCurrentTarget = false;
+        }
+      }
+      if (!isCurrentTarget) {
+        fs.rmSync(releaseDir, { recursive: true, force: true });
+        logger.info(
+          `Cleaned up failed/cancelled release directory '${deploymentId}' for project '${projectName}'`,
+          { project: projectName, deploymentId },
+        );
+      }
+    } catch (err: any) {
+      logger.warn(`Could not clean up release directory '${releaseDir}': ${err.message}`);
+    }
   }
 
   private async runStep(
@@ -778,7 +829,7 @@ export class DeploymentPipelineRunner {
         completedAt: Date.now(),
         duration,
         exitCode: 0,
-        output: typeof stepOutput === 'string' ? stepOutput : undefined,
+        output: typeof stepOutput === 'string' ? truncateStepOutput(stepOutput) : undefined,
       });
     } catch (err: any) {
       const duration = Date.now() - startTime;
@@ -788,7 +839,7 @@ export class DeploymentPipelineRunner {
         completedAt: Date.now(),
         duration,
         exitCode: err.exitCode ?? 1,
-        output: errorOutput,
+        output: errorOutput ? truncateStepOutput(errorOutput) : undefined,
         error: err.message,
       });
       throw err;

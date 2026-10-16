@@ -234,6 +234,9 @@ export class UnitupAdapter implements RuntimeManager {
         memoryHigh: options?.memoryHigh,
         start: shouldStart,
         force: true,
+        logLevelMax: 'info',
+        logRateLimitIntervalSec: '10s',
+        logRateLimitBurst: 200,
       };
 
       if (options?.port) {
@@ -405,11 +408,12 @@ export class UnitupAdapter implements RuntimeManager {
         restartCount: Number.isNaN(parsedRestarts!) ? undefined : parsedRestarts,
         generations: gens.length > 0 ? gens : undefined,
       };
-    } catch {
+    } catch (err: any) {
+      logger.debug(`Failed to query service status for '${service}': ${err.message}`);
       return {
         service,
         active: false,
-        subState: 'inactive',
+        subState: 'query_failed',
       };
     }
   }

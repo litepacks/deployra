@@ -192,6 +192,98 @@ describe('Deployra Self-Repair & Auto-Recovery Mechanisms', () => {
     await workmatic.stopWorker();
   });
 
+  it('SourceWatcher never auto-retries cancelled deployments on polling', async () => {
+    const projRepo = new ProjectRepository();
+    const depRepo = new DeploymentRepository();
+    const workmatic = new WorkmaticEngine();
+    const watcher = new SourceWatcher(workmatic);
+
+    const config = normalizeAndValidateConfig({
+      project: { name: 'cancelled-app', path: repoDir },
+      source: { remote: 'origin', branch: 'main' },
+      watch: { intervalMs: 5000 },
+      deploy: { commands: { build: ['echo build'] } },
+    });
+    projRepo.saveProject(config);
+
+    const headSha = await new GitClient().getCurrentSha(repoDir);
+
+    // Simulate a deployment that was manually cancelled
+    const cancelledDep = depRepo.createDeployment({
+      projectName: 'cancelled-app',
+      targetSha: headSha,
+      triggerType: 'poll',
+    });
+    depRepo.updateStatus(cancelledDep.id, 'cancelled', 'Cancelled by operator');
+
+    // Simulate that enough cooldown time has elapsed
+    const db = getDatabase();
+    db.prepare(`UPDATE deployments SET completed_at = ? WHERE id = ?`).run(
+      Date.now() - 120000,
+      cancelledDep.id,
+    );
+
+    // Polling check should NOT auto-retry deploying the cancelled SHA
+    const result = await watcher.checkProject('cancelled-app', 'poll', false, headSha);
+    expect(result).toBeNull();
+
+    // Verify lastSeenSha was updated to avoid re-polling loop
+    const updatedProj = projRepo.getProject('cancelled-app');
+    expect(updatedProj?.lastSeenSha).toBe(headSha);
+
+    // However, manual deployment should still be allowed
+    const manualDepId = await watcher.checkProject('cancelled-app', 'manual', false, headSha);
+    expect(manualDepId).toBeDefined();
+
+    await workmatic.stopWorker();
+  });
+
+  it('countRecentFailures accurately accounts for cancelled deployments alongside failures', () => {
+    const projRepo = new ProjectRepository();
+    const depRepo = new DeploymentRepository();
+    const targetSha = 'abc1234567890';
+
+    projRepo.saveProject(
+      normalizeAndValidateConfig({
+        project: { name: 'test-p', path: repoDir },
+        source: { remote: 'origin', branch: 'main' },
+      }),
+    );
+
+    // Create 1 failed, 1 rolled_back, 1 cancelled, and 1 success deployment
+    const dep1 = depRepo.createDeployment({
+      projectName: 'test-p',
+      targetSha,
+      triggerType: 'manual',
+    });
+    depRepo.updateStatus(dep1.id, 'failed');
+
+    const dep2 = depRepo.createDeployment({
+      projectName: 'test-p',
+      targetSha,
+      triggerType: 'manual',
+    });
+    depRepo.updateStatus(dep2.id, 'cancelled');
+
+    const dep3 = depRepo.createDeployment({
+      projectName: 'test-p',
+      targetSha,
+      triggerType: 'manual',
+    });
+    depRepo.updateStatus(dep3.id, 'rolled_back');
+
+    const dep4 = depRepo.createDeployment({
+      projectName: 'test-p',
+      targetSha,
+      triggerType: 'manual',
+    });
+    depRepo.updateStatus(dep4.id, 'success');
+
+    // countRecentFailures should count failed, cancelled, rolled_back (3 total), excluding success
+    const failureCount = depRepo.countRecentFailures('test-p', targetSha);
+    expect(failureCount).toBe(3);
+  });
+
   it('Daemon Self-Repair Watchdog cycle auto-heals down services and prunes locks', async () => {
     const daemon = new DeployraDaemon({ watchdogIntervalMs: 10000 });
     const projRepo = new ProjectRepository();

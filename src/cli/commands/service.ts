@@ -85,7 +85,9 @@ export async function serviceCommand(
           rawScript && fs.existsSync(rawScript) ? path.resolve(rawScript) : undefined;
 
         const isRoot = isRootUser();
-        const serviceEnv: Record<string, string> = {};
+        const serviceEnv: Record<string, string> = {
+          LOG_LEVEL: 'info',
+        };
         if (isRoot) {
           serviceEnv.DEPLOYRA_ALLOW_ROOT = 'true';
         }
@@ -97,7 +99,10 @@ export async function serviceCommand(
           cwd: process.cwd(),
           restart: 'always' as const,
           force: true,
-          env: Object.keys(serviceEnv).length > 0 ? serviceEnv : undefined,
+          logLevelMax: 'info',
+          logRateLimitIntervalSec: '10s',
+          logRateLimitBurst: 200,
+          env: serviceEnv,
         };
 
         try {

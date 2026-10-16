@@ -355,7 +355,7 @@ export class DeploymentRepository {
         (d.target_sha === targetSha ||
           d.target_sha.startsWith(targetSha) ||
           targetSha.startsWith(d.target_sha)) &&
-        ['failed', 'rolled_back', 'rollback_failed'].includes(d.status),
+        ['failed', 'rolled_back', 'rollback_failed', 'cancelled'].includes(d.status),
     ).length;
   }
 
