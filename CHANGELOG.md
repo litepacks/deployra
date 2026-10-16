@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.3] - 2026-10-16
+
+### 🛡️ Daemon Reliability, Watcher Live-lock & Log Flooding Fixes
+- **Watcher In-Flight Protection & Live-lock Prevention**:
+  - Replaced `checkingProjects: Set<string>` with `Map<string, InFlightCheck>` tracking execution start time, timeout timer, and `AbortController`.
+  - Added in-flight protection to `syncProjects()` so in-flight projects are never marked stalled or rescheduled with a 0ms thundering loop.
+  - Implemented 45-second zombie timeout enforcement that aborts child processes, clears locks, and backs off gracefully.
+  - Throttled repetitive "already in progress" logs to at most once per 5 minutes per project.
+- **Log Level Filtering & Systemd Journal Rate Limiting**:
+  - Added strict log level priority (`debug: 0, info: 1, warn: 2, error: 3, silent: 4`) to suppress high-frequency debug output in production.
+  - Defaulted log level to `info` in systemd and daemon modes.
+  - Added systemd journal rate-limiting directives (`LogLevelMax=info`, `LogRateLimitIntervalSec=10s`, `LogRateLimitBurst=200`, `LOG_LEVEL=info`) to generated service units.
+- **Git Timeout Enforcement**:
+  - Added default 30s timeout across all Git commands and wired `AbortSignal` into `checkRemoteHead` and `fetchBranch`.
+
+### ⚡ Systemic Resource Leak & Reliability Hardening
+1. **Cancelled Deployments Infinite Retry Fix**:
+   - Explicitly handled `cancelled` deployments in `SourceWatcher` to prevent automated polling retries.
+   - Updated `DeploymentRepository.countRecentFailures` to accurately include `cancelled` alongside failures.
+2. **SQLite WAL Checkpointing & Automatic Compaction**:
+   - Added `PRAGMA wal_checkpoint(TRUNCATE)` and `VACUUM` into `vacuumDatabase()`.
+   - Wired `vacuumDatabase()` into the daemon's periodic auto-retention cycle to prevent SQLite disk bloat.
+3. **Orphan Release Directory Cleanup**:
+   - Added automatic purge of failed/cancelled `releases/<deploymentId>` directories when `current` symlink does not point to them.
+4. **Step Output Truncation (Heap OOM Prevention)**:
+   - Added `MAX_STEP_OUTPUT_CHARS = 250_000` (~250 KB) tail-preserving output truncation in `runStep` to prevent huge build outputs from exhausting Node.js heap memory or bloating SQLite.
+5. **Fresh Git Lock Preservation**:
+   - Added `maxAgeMs` parameter to `repairStaleLocks` and enforced a 15-second age threshold on lock contention to avoid wiping locks belonging to actively running Git processes.
+6. **Systemd D-Bus Query Resilience**:
+   - Marked transient systemctl/D-Bus errors as `subState: 'query_failed'` and guarded daemon watchdog against false positive service restart loops.
+7. **Ghost Timer Prevention on Watcher Stop**:
+   - Added `isStopped` lifecycle state guards in `SourceWatcher` to prevent lingering callbacks from reviving timers after `stop()`.
+
+---
+
 ## [0.4.1] - 2026-09-21
 
 ### 📚 Documentation & Developer Experience
