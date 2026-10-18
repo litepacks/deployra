@@ -88,6 +88,7 @@ export interface PreflightConfig {
   diskCheck?: boolean; // Default true
   minDiskFreeMb?: number; // e.g. 500 (MB)
   maxDiskUsagePercent?: number; // Default 90 (%)
+  portCheck?: boolean; // Default true
 }
 
 export interface DeployConfig {
@@ -218,6 +219,7 @@ export interface NormalizedDeployraConfig {
       diskCheck: boolean;
       minDiskFreeMb?: number;
       maxDiskUsagePercent: number;
+      portCheck: boolean;
     };
     commands: Record<string, string[]>;
     port?: number;

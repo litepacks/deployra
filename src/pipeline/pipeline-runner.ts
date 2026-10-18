@@ -13,6 +13,7 @@ import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
 import { parseCommandString, UnitupAdapter } from '../runtime/unitup-adapter.js';
 import { checkDiskSpace } from '../security/disk-check.js';
 import { safeExec } from '../security/exec.js';
+import { checkZeroDowntimePort } from '../security/port-check.js';
 import { DeploymentRepository } from '../storage/deployment-repository.js';
 import { ProjectRepository } from '../storage/project-repository.js';
 import { StateRepository } from '../storage/state-repository.js';
@@ -151,6 +152,33 @@ export class DeploymentPipelineRunner {
           }
           if (!diskCheck.ok && diskCheck.error) {
             throw new PreflightError(`Pre-flight disk check failed: ${diskCheck.error}`);
+          }
+        }
+
+        // Pre-flight zero-downtime port check
+        if (!isDryRun && (config.deploy.preflight?.portCheck ?? true)) {
+          const isZeroDowntime =
+            config.deploy.strategy === 'zero-downtime' || config.deploy.zeroDowntime;
+          const publicPort = config.deploy.port || config.deploy.service.port;
+
+          if (isZeroDowntime && publicPort) {
+            const portResult = await checkZeroDowntimePort(config.deploy.service.name, publicPort);
+            if (!portResult.ok && portResult.error) {
+              throw new PreflightError(portResult.error);
+            }
+
+            const cmd = config.deploy.service.command || '';
+            const script = config.deploy.service.script || '';
+            const combined = `${cmd} ${script}`;
+            const portRegex = new RegExp(
+              `\\bPORT\\s*=\\s*${publicPort}\\b|--port[=\\s]+${publicPort}\\b`,
+            );
+            if (portRegex.test(combined)) {
+              logger.warn(
+                `[PRE-FLIGHT] Service command appears to set a hardcoded port (${publicPort}). In zero-downtime mode, the application MUST listen on dynamically assigned process.env.PORT!`,
+                { project: projectName, service: config.deploy.service.name, port: publicPort },
+              );
+            }
           }
         }
       });

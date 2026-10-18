@@ -146,6 +146,7 @@ export const preflightConfigSchema = z.object({
   diskCheck: z.boolean().default(true),
   minDiskFreeMb: z.number().int().positive().optional(),
   maxDiskUsagePercent: z.number().min(1).max(100).default(98),
+  portCheck: z.boolean().default(true),
 });
 
 export const deployraConfigSchema = z.object({
@@ -480,6 +481,7 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
         diskCheck: data.deploy.preflight?.diskCheck ?? true,
         minDiskFreeMb: data.deploy.preflight?.minDiskFreeMb,
         maxDiskUsagePercent: data.deploy.preflight?.maxDiskUsagePercent ?? 98,
+        portCheck: data.deploy.preflight?.portCheck ?? true,
       },
       commands: data.deploy.commands,
       port: publicPort,

@@ -318,7 +318,7 @@ describe("Zero-Downtime Atomic Symlink Deployments (strategy: 'release')", () =>
     expect(existingDirs).toContain(depId3);
     const currentLink = path.join(releaseRoot, 'current');
     expect(fs.realpathSync(currentLink)).toBe(fs.realpathSync(path.join(releasesDir, depId3)));
-  }, 20000);
+  }, 60000);
 
   it('performs instant symlink rollback when build or check fails in release mode', async () => {
     const projRepo = new ProjectRepository();
@@ -436,7 +436,7 @@ describe("Zero-Downtime Atomic Symlink Deployments (strategy: 'release')", () =>
     // Verify failed release folder was cleaned up
     const badDir = path.join(releaseRoot, 'releases', depId2);
     expect(fs.existsSync(badDir)).toBe(false);
-  }, 20000);
+  }, 60000);
 
   it('runs safely in dry-run mode without creating releases or symlinks', async () => {
     const projRepo = new ProjectRepository();

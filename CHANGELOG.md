@@ -5,6 +5,24 @@ All notable changes to Deployra will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-10-18
+
+### 🛡️ Port Conflict Prevention, Self-Healing & Supervisor Defense
+- **Pre-Flight Zero-Downtime Port Availability Defense**:
+  - Added `src/security/port-check.ts` providing `isPortOccupied` and `checkZeroDowntimePort(serviceName, port)`.
+  - Added `portCheck: boolean` to `preflight` configuration (enabled by default).
+  - During Step 1 (`prepare-workspace`), Deployra now verifies that the configured public zero-downtime port is either completely free or owned by the project's own Unitup supervisor via IPC socket handshake. If occupied by an unmanaged foreign process, deployment fails fast with `PreflightError`, preventing systemd service crash loops.
+- **Port Environment Variable Linter & Guidance**:
+  - Added pre-flight detection for hardcoded `PORT=xxxx` overrides in custom build/start commands, warning the user that zero-downtime applications must dynamically bind to `process.env.PORT` provided by Unitup's supervisor.
+- **UnitupAdapter Fast-Fail Circuit Breaker**:
+  - Enforced active port collision verification inside `UnitupAdapter.deployZeroDowntime()` before creating or upserting systemd services, stopping unrecoverable collisions before touching systemd.
+- **Unitup v0.4.1 Dependency Upgrade**:
+  - Upgraded to `unitup` `^0.4.1` with supervisor TCP connectivity health checks, automated generation self-healing to eliminate `502 Bad Gateway (ECONNREFUSED)`, and POSIX code 78 (`RestartPreventExitStatus=78`) systemd rate-limit crash breakers.
+- **Test Suite Hardening**:
+  - Increased integration test timeouts in `test/release-strategy.test.ts` to prevent flakiness during multi-release test executions.
+
+---
+
 ## [0.4.4] - 2026-10-18
 
 ### 🚀 Enhancements & Zero-Downtime Reliability

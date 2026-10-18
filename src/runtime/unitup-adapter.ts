@@ -22,6 +22,7 @@ import {
 } from 'unitup';
 import { RuntimeError } from '../errors/deployra-error.js';
 import { logger } from '../logging/logger.js';
+import { checkZeroDowntimePort } from '../security/port-check.js';
 import type {
   AppLogOptions,
   GenerationRecordInfo,
@@ -483,6 +484,14 @@ export class UnitupAdapter implements RuntimeManager {
     }
 
     try {
+      // Defensive check: If public port is specified and occupied by an unmanaged process, fail fast before touching systemd
+      if (options?.publicPort) {
+        const portResult = await checkZeroDowntimePort(service, options.publicPort);
+        if (!portResult.ok && portResult.error) {
+          throw new RuntimeError(`Unitup zero-downtime deployment failed: ${portResult.error}`);
+        }
+      }
+
       // If service unit does not exist yet or needs registration, ensure it's registered
       const existingMeta = readAppMetadata(service);
       const isZeroDowntimeConfigured = Boolean((existingMeta as any)?.deploy?.zeroDowntime);
