@@ -484,7 +484,11 @@ export class UnitupAdapter implements RuntimeManager {
 
     try {
       // If service unit does not exist yet or needs registration, ensure it's registered
-      if (!unitFileExists(service)) {
+      const existingMeta = readAppMetadata(service);
+      const isZeroDowntimeConfigured = Boolean((existingMeta as any)?.deploy?.zeroDowntime);
+      const portMatches = !options?.publicPort || existingMeta?.port === options.publicPort;
+
+      if (!unitFileExists(service) || !isZeroDowntimeConfigured || !portMatches) {
         await this.upsertService(
           service,
           {
