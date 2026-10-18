@@ -1,3 +1,4 @@
+export { type AppLogsCommandOptions, appLogsCommand } from './cli/commands/app-logs.js';
 export { cleanCommand } from './cli/commands/clean.js';
 export { rollbackCommand } from './cli/commands/rollback.js';
 export { statsCommand } from './cli/commands/stats.js';
@@ -26,6 +27,7 @@ export {
 } from './logging/masker.js';
 export { DeploymentPipelineRunner } from './pipeline/pipeline-runner.js';
 export { ReadyCheckerAdapter } from './readiness/ready-checker-adapter.js';
+export type { AppLogOptions } from './runtime/runtime-manager.js';
 export { UnitupAdapter } from './runtime/unitup-adapter.js';
 export { assertDiskSpace, checkDiskSpace } from './security/disk-check.js';
 export { extractClientIp, isIpAllowed, matchCidr, normalizeIp } from './security/ip-matcher.js';

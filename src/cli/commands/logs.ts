@@ -147,8 +147,24 @@ export async function logsCommand(
     deployment?: string;
     format?: 'pretty' | 'json' | 'jsonl';
     step?: string;
+    app?: boolean;
+    lines?: string | number;
+    grep?: string;
+    since?: string;
   } = {},
 ): Promise<void> {
+  if (options.app) {
+    const { appLogsCommand } = await import('./app-logs.js');
+    await appLogsCommand(projectName, {
+      follow: options.follow,
+      lines: options.lines,
+      grep: options.grep,
+      since: options.since,
+      json: options.format === 'json' || options.format === 'jsonl',
+    });
+    return;
+  }
+
   const targetProject = resolveProjectName(projectName);
   const depRepo = new DeploymentRepository();
 

@@ -27,6 +27,7 @@ export function printServiceHelp(): void {
       chalk.bold('status'),
       'Display active status, PID, lingering, and health of Deployra daemon service',
     ],
+    [chalk.bold('logs'), 'View Unitup service logs for the Deployra background daemon'],
     [chalk.bold('uninstall'), 'Remove the Deployra daemon background service from systemd'],
   );
 
@@ -37,6 +38,7 @@ export function printServiceHelp(): void {
   );
   console.log(`  $ ${chalk.green('deployra service start')}     # Start daemon service`);
   console.log(`  $ ${chalk.green('deployra service status')}    # View service status & lingering`);
+  console.log(`  $ ${chalk.green('deployra service logs')}      # View daemon service logs`);
   console.log(`  $ ${chalk.green('deployra service restart')}   # Restart daemon service\n`);
 }
 
@@ -67,7 +69,7 @@ async function tryEnableLinger(): Promise<{ enabled: boolean; note?: string }> {
 }
 
 export async function serviceCommand(
-  action?: 'install' | 'start' | 'stop' | 'restart' | 'status' | 'uninstall',
+  action?: 'install' | 'start' | 'stop' | 'restart' | 'status' | 'logs' | 'uninstall',
 ): Promise<void> {
   if (!action) {
     printServiceHelp();
@@ -176,6 +178,12 @@ export async function serviceCommand(
               chalk.gray(` (${lingerCheck.note})`),
           );
         }
+        break;
+      }
+      case 'logs': {
+        const out = await adapter.logs(serviceName, { lines: 100 });
+        console.log(chalk.bold(`\n📦 Daemon Service Logs ('${chalk.cyan(serviceName)}'):\n`));
+        console.log(typeof out === 'string' ? out : 'No logs found.');
         break;
       }
       case 'uninstall':

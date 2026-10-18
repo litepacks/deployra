@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { addCommand } from './commands/add.js';
+import { appLogsCommand } from './commands/app-logs.js';
 import { cancelCommand } from './commands/cancel.js';
 import { checkCommand } from './commands/check.js';
 import { cleanCommand } from './commands/clean.js';
@@ -164,13 +165,36 @@ program
 
 program
   .command('logs [projectName]')
-  .description('View deployment logs')
+  .description('View deployment pipeline logs (or pass --app for runtime application logs)')
   .option('-f, --follow', 'Follow log stream')
   .option('-d, --deployment <id>', 'Deployment ID')
   .option('-s, --step <name>', 'Filter logs for a specific step')
+  .option('-a, --app', 'View runtime application/service logs managed by Unitup')
+  .option('-n, --lines <number>', 'Number of lines to display (with --app)', '100')
+  .option('-g, --grep <pattern>', 'Filter log lines by pattern (with --app)')
+  .option('--since <time>', 'Show logs since timestamp or duration (with --app)')
   .option('--format <type>', 'Output format (pretty | json | jsonl)', 'pretty')
   .action(async (projectName, options) => {
     await logsCommand(projectName, options);
+  });
+
+program
+  .command('app-logs [projectName]')
+  .alias('applogs')
+  .alias('service-logs')
+  .description('View runtime application and service logs managed by Unitup')
+  .option('-f, --follow', 'Follow live application log stream')
+  .option('-n, --lines <number>', 'Number of recent log lines to display', '100')
+  .option('--since <time>', 'Show logs since timestamp or relative duration (e.g. "1 hour ago")')
+  .option('--until <time>', 'Show logs until timestamp')
+  .option('-g, --grep <pattern>', 'Filter log lines matching regex/pattern')
+  .option('-p, --priority <level>', 'Filter by syslog priority (e.g. err, warning, info)')
+  .option('--stdout', 'Show only standard output (stdout) logs')
+  .option('--stderr', 'Show only standard error (stderr) logs')
+  .option('-c, --cat', 'Raw log output without headers or metadata')
+  .option('--json', 'Output logs in JSON format')
+  .action(async (projectName, options) => {
+    await appLogsCommand(projectName, options);
   });
 
 program
@@ -209,7 +233,7 @@ program
 program
   .command('service [action]')
   .description(
-    'Manage Deployra daemon systemd service (install | start | stop | restart | status | uninstall)',
+    'Manage Deployra daemon systemd service (install | start | stop | restart | status | logs | uninstall)',
   )
   .action(async (action) => {
     await serviceCommand(action as any);

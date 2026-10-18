@@ -23,7 +23,8 @@ Deployra provides an extensive command-line interface for orchestrating deployme
 | `deployra promote [project]` | Promote active canary generation to 100% traffic |
 | `deployra cancel <id\|project>` | Cancel a queued or running deployment |
 | `deployra history [project]` | List past deployment records and durations |
-| `deployra logs [project]` | Stream or tail deployment execution logs |
+| `deployra logs [project]` | Stream or tail deployment execution logs (`--app` for runtime app logs) |
+| `deployra app-logs [project]` | View or stream live Unitup runtime application/service logs |
 | `deployra clean [project]` | Prune old release folders and archived deployments |
 | `deployra repair [project]` | Self-repair stale Git locks and orphan SQLite locks |
 | `deployra stats [project]` | View detailed execution durations and metrics |
@@ -91,10 +92,25 @@ deployra cancel my-app
 ```
 
 ### `deployra logs`
-Streams real-time deployment logs:
+Streams real-time deployment pipeline logs:
 
 ```bash
-deployra logs my-app --tail 100 --follow
+deployra logs my-app --follow
+```
+
+### `deployra app-logs`
+Views or streams runtime application/service logs directly from Unitup (systemd journald or Unitup service log files):
+
+```bash
+# View last 100 lines of application output
+deployra app-logs my-app
+
+# Follow live application log stream
+deployra app-logs my-app --follow
+
+# Filter application stderr or grep by pattern
+deployra app-logs my-app --stderr --lines 200
+deployra app-logs my-app --grep "ERROR" --since "1 hour ago"
 ```
 
 ### `deployra repair`

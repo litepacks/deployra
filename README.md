@@ -245,12 +245,13 @@ deployra promote web-api
 | `deployra cancel [target]` | Cancel an active or queued deployment |
 | `deployra status [app] [-w]` | View status summary or launch real-time live TUI dashboard (`--watch`) |
 | `deployra stats [app]` | Display deployment metrics, success rates, and step durations |
-| `deployra logs [app]` | View deployment step logs and stderr outputs |
+| `deployra logs [app]` | View deployment step logs and stderr outputs (`--app` for runtime app logs) |
+| `deployra app-logs [app] [opts]` | View Unitup runtime application logs (`-f` follow, `-n` lines, `-g` grep, `--stdout`, `--stderr`) |
 | `deployra history [app]` | View past deployment history |
 | `deployra clean [app]` | Clean up old deployment history and optimize SQLite database |
 | `deployra notify-test [app]` | Send test alerts to verify configured notification channels |
 | `deployra doctor [configPath]` | Run system diagnostics (Git, SQLite, systemd, disk space) |
-| `deployra service <action>` | Manage Deployra as a systemd user service (`install\|start\|stop\|restart\|status\|uninstall`) |
+| `deployra service <action>` | Manage Deployra as a systemd user service (`install\|start\|stop\|restart\|status\|logs\|uninstall`) |
 | `deployra upgrade` | Check for and install CLI updates |
 | `deployra uninstall` | Completely uninstall Deployra daemon, service files, and database |
 

@@ -1,14 +1,21 @@
+import type { ChildProcess } from 'node:child_process';
+import type { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
   addService,
   defaultDeploymentManager,
+  defaultManager,
   defaultRollbackManager,
   generations,
   getServiceStatus,
+  getUnitupDir,
   isUserSystemdAvailable,
+  readAppMetadata,
+  readServiceLogs,
   removeService,
   restartService,
+  sanitizeServiceName,
   startService,
   stopService,
   unitFileExists,
@@ -16,6 +23,7 @@ import {
 import { RuntimeError } from '../errors/deployra-error.js';
 import { logger } from '../logging/logger.js';
 import type {
+  AppLogOptions,
   GenerationRecordInfo,
   RuntimeManager,
   RuntimeStatus,
@@ -500,6 +508,8 @@ export class UnitupAdapter implements RuntimeManager {
         args = [path.resolve(cwd, entry.script)];
       }
 
+      const safeName = sanitizeServiceName(service);
+      const logsDir = path.join(getUnitupDir(), 'logs');
       const svcConfig: Record<string, unknown> = {
         name: service,
         command,
@@ -507,6 +517,10 @@ export class UnitupAdapter implements RuntimeManager {
         script: entry.script,
         cwd,
         port: options?.publicPort,
+        logs: {
+          stdout: path.join(logsDir, `${safeName}.log`),
+          stderr: path.join(logsDir, `${safeName}-error.log`),
+        },
       };
 
       const deployOpts: Record<string, unknown> = {
@@ -743,6 +757,88 @@ export class UnitupAdapter implements RuntimeManager {
       return Array.isArray(genList) ? genList : [];
     } catch {
       return [];
+    }
+  }
+
+  public getServiceLogPaths(
+    service: string,
+    options?: Pick<AppLogOptions, 'stdout' | 'stderr' | 'output'>,
+  ): string[] {
+    const safeName = sanitizeServiceName(service);
+    const meta = readAppMetadata(safeName);
+    const logsDir = path.join(getUnitupDir(), 'logs');
+    const stdoutPath = meta?.logs?.stdout || path.join(logsDir, `${safeName}.log`);
+    const stderrPath = meta?.logs?.stderr || path.join(logsDir, `${safeName}-error.log`);
+
+    if (options?.stderr || options?.output === 'stderr') {
+      return [stderrPath];
+    }
+    if (options?.stdout || options?.output === 'stdout') {
+      return [stdoutPath];
+    }
+    return [stdoutPath, stderrPath];
+  }
+
+  public async logs(
+    service: string,
+    options: AppLogOptions = {},
+  ): Promise<string | EventEmitter | ChildProcess | null> {
+    const safeName = sanitizeServiceName(service);
+    const filePaths = this.getServiceLogPaths(safeName, options);
+    const hasLogFiles = filePaths.some((p) => {
+      try {
+        return fs.existsSync(p) && fs.statSync(p).size > 0;
+      } catch {
+        return false;
+      }
+    });
+
+    const isSystemd =
+      process.platform === 'linux' &&
+      (this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable());
+
+    if (isSystemd && !options.stdout && !options.stderr) {
+      try {
+        const res = await defaultManager.logs(safeName, options);
+        if (options.follow) {
+          if (res) return res;
+          if (hasLogFiles) {
+            return await readServiceLogs(filePaths, options);
+          }
+          return null;
+        }
+        if (typeof res === 'string') {
+          const trimmed = res.trim();
+          const isEmptyJournal =
+            !trimmed ||
+            trimmed === 'No logs found.' ||
+            trimmed.includes('No journal files') ||
+            trimmed.includes('No entries') ||
+            trimmed.includes('-- No entries --');
+          if (isEmptyJournal && hasLogFiles) {
+            return await readServiceLogs(filePaths, options);
+          }
+          return res;
+        }
+        return res;
+      } catch (err: any) {
+        if (hasLogFiles) {
+          return await readServiceLogs(filePaths, options);
+        }
+        throw new RuntimeError(
+          `Failed to retrieve Unitup logs for service '${safeName}': ${err.message}`,
+        );
+      }
+    }
+
+    try {
+      return await readServiceLogs(filePaths, options);
+    } catch (err: any) {
+      throw new RuntimeError(
+        `Failed to read Unitup log files for service '${safeName}': ${err.message}`,
+      );
     }
   }
 }

@@ -1,3 +1,6 @@
+import type { ChildProcess } from 'node:child_process';
+import type { EventEmitter } from 'node:events';
+
 export interface RuntimeStatus {
   service: string;
   active: boolean;
@@ -72,6 +75,21 @@ export interface ServiceOptions {
   restartSec?: string;
 }
 
+export interface AppLogOptions {
+  follow?: boolean;
+  lines?: number;
+  cat?: boolean;
+  output?: string;
+  stdout?: boolean;
+  stderr?: boolean;
+  since?: string;
+  until?: string;
+  priority?: string;
+  grep?: string;
+  boot?: boolean;
+  json?: boolean;
+}
+
 export interface RuntimeManager {
   start(service: string, options?: ServiceOptions): Promise<void>;
   stop(service: string): Promise<void>;
@@ -79,6 +97,10 @@ export interface RuntimeManager {
   reload(service: string, options?: ServiceOptions): Promise<void>;
   status(service: string): Promise<RuntimeStatus>;
   remove(service: string): Promise<void>;
+  logs?(
+    service: string,
+    options?: AppLogOptions,
+  ): Promise<string | EventEmitter | ChildProcess | null>;
   deployZeroDowntime?(service: string, options?: ZeroDowntimeOptions): Promise<ZeroDowntimeResult>;
   rollbackZeroDowntime?(
     service: string,
