@@ -5,6 +5,17 @@ All notable changes to Deployra will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-10-18
+
+### 🚀 Enhancements & Zero-Downtime Reliability
+- **Unitup v0.4.0 Integration**:
+  - Upgraded `unitup` dependency to `^0.4.0`, bringing concurrent multi-port routing isolation, strict port-scoped traffic dispatching, and zero cross-service collision.
+- **Dynamic Service Registration Check**:
+  - Enhanced `UnitupAdapter.deployZeroDowntime()` to inspect `readAppMetadata(service)` before skipping service registration.
+  - Automatically re-upserts services if the existing systemd unit lacks zero-downtime supervisor configuration or if the configured public port has changed.
+- **Release CI/CD Hardening**:
+  - Added `.litepacks-release-tools/` to `.gitignore` to ensure clean release runs.
+
 ---
 
 ## [0.4.3] - 2026-10-16
