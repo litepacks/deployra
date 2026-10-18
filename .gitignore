@@ -8,3 +8,5 @@ coverage/
 dist-docs/
 .docboot/
 .docup/
+# Release tools
+.litepacks-release-tools/
