@@ -1,6 +1,6 @@
 {
   "name": "deployra",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "description": "Lightweight, platform-independent VPS deployment orchestrator",
   "type": "module",
   "main": "./dist/index.js",

@@ -5,7 +5,7 @@ All notable changes to Deployra will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-10-31
 
 ### ⚠️ Breaking
 - **Webhooks require a secret by default**: requests are rejected with `401` when neither `webhook.secret` nor `DEPLOYRA_WEBHOOK_SECRET` is set. Set `webhook.allowUnsigned: true` to keep accepting unsigned webhooks.
