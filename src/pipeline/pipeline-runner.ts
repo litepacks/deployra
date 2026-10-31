@@ -1,13 +1,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { computeConfigHash, loadConfigFromDir, parseEnvFile } from '../config/parser.js';
+import { computeConfigHash, loadConfigFromDir } from '../config/parser.js';
 import type { NormalizedDeployraConfig } from '../config/types.js';
+import {
+  buildCommandEnv,
+  resolveDeploymentEnv,
+  resolveServiceEnv,
+} from '../deployment/deploy-env.js';
 import { RollbackManager } from '../deployment/rollback-manager.js';
+import {
+  createDeploymentProgress,
+  type DeploymentProgress,
+  isServiceAffected,
+  isZeroDowntimeEnabled,
+} from '../deployment/strategy.js';
+import { resolveSyncExcludes, syncIsolatedWorkspace } from '../deployment/workspace-sync.js';
 import { DeployraError, PreflightError } from '../errors/deployra-error.js';
 import { GitClient } from '../git/git-client.js';
 import type { DeploymentJobPayload } from '../jobs/workmatic-engine.js';
 import { logger } from '../logging/logger.js';
-import { registerSecrets } from '../logging/masker.js';
 import { NotificationService } from '../notifications/notification-service.js';
 import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
 import { parseCommandString, UnitupAdapter } from '../runtime/unitup-adapter.js';
@@ -19,6 +30,7 @@ import { ProjectRepository } from '../storage/project-repository.js';
 import { StateRepository } from '../storage/state-repository.js';
 
 export const MAX_STEP_OUTPUT_CHARS = 250_000;
+export const LOCK_HEARTBEAT_MS = 30_000;
 
 export function truncateStepOutput(output: string, maxChars = MAX_STEP_OUTPUT_CHARS): string {
   if (!output || output.length <= maxChars) {
@@ -40,8 +52,21 @@ export class DeploymentPipelineRunner {
   private stateRepo = new StateRepository();
   private activeAbortControllers = new Map<
     string,
-    { controller: AbortController; projectName: string }
+    // critical: the deployment has started changing the live service and must not be
+    // superseded halfway; explicit cancellation is still allowed.
+    { controller: AbortController; projectName: string; critical: boolean }
   >();
+
+  public getCriticalDeploymentIds(projectName: string): string[] {
+    return Array.from(this.activeAbortControllers.entries())
+      .filter(([, entry]) => entry.projectName === projectName && entry.critical)
+      .map(([id]) => id);
+  }
+
+  private markCritical(deploymentId: string): void {
+    const entry = this.activeAbortControllers.get(deploymentId);
+    if (entry) entry.critical = true;
+  }
 
   public abortDeployment(deploymentId: string, reason = 'Deployment cancelled'): boolean {
     const entry = this.activeAbortControllers.get(deploymentId);
@@ -60,6 +85,13 @@ export class DeploymentPipelineRunner {
   ): void {
     for (const [depId, entry] of Array.from(this.activeAbortControllers.entries())) {
       if (entry.projectName === projectName) {
+        if (entry.critical) {
+          logger.info(
+            `Deployment #${depId} for project '${projectName}' is already changing the live service; letting it finish before the newer deployment runs.`,
+            { project: projectName, deploymentId: depId },
+          );
+          continue;
+        }
         entry.controller.abort(new Error(reason));
         this.activeAbortControllers.delete(depId);
         logger.info(`Aborted active deployment #${depId} for project '${projectName}': ${reason}`, {
@@ -88,6 +120,7 @@ export class DeploymentPipelineRunner {
     this.activeAbortControllers.set(deploymentId, {
       controller: abortController,
       projectName,
+      critical: false,
     });
 
     let config = project.config;
@@ -104,6 +137,8 @@ export class DeploymentPipelineRunner {
         : project.path;
     const isDryRun = Boolean(payload.dryRun);
     let lockAcquired = false;
+    let lockHeartbeat: NodeJS.Timeout | undefined;
+    const progress = createDeploymentProgress();
 
     const initialStatus = this.deploymentRepo.getDeploymentStatus(deploymentId);
     if (initialStatus === 'cancelled') {
@@ -138,6 +173,15 @@ export class DeploymentPipelineRunner {
           throw new DeployraError(`Could not acquire deployment lock for project '${projectName}'`);
         }
 
+        lockHeartbeat = setInterval(() => {
+          try {
+            this.stateRepo.refreshLock(projectName, deploymentId);
+          } catch {
+            // Best effort; a missed heartbeat only shortens the stale window
+          }
+        }, LOCK_HEARTBEAT_MS);
+        lockHeartbeat.unref?.();
+
         // Pre-flight disk space check
         if (!isDryRun && config.deploy.preflight?.diskCheck) {
           const diskCheck = checkDiskSpace(workingDir, {
@@ -156,36 +200,8 @@ export class DeploymentPipelineRunner {
         }
 
         // Pre-flight zero-downtime port check
-        if (!isDryRun && (config.deploy.preflight?.portCheck ?? true)) {
-          const isZeroDowntime =
-            config.deploy.strategy === 'zero-downtime' || config.deploy.zeroDowntime;
-          const publicPort = config.deploy.port || config.deploy.service.port;
-
-          if (isZeroDowntime && publicPort) {
-            const portResult = await checkZeroDowntimePort(config.deploy.service.name, publicPort);
-            if (!portResult.ok && portResult.error) {
-              throw new PreflightError(portResult.error);
-            }
-            if (portResult.warning) {
-              logger.warn(`[PRE-FLIGHT] ${portResult.warning}`, {
-                project: projectName,
-                deploymentId,
-              });
-            }
-
-            const cmd = config.deploy.service.command || '';
-            const script = config.deploy.service.script || '';
-            const combined = `${cmd} ${script}`;
-            const portRegex = new RegExp(
-              `\\bPORT\\s*=\\s*${publicPort}\\b|--port[=\\s]+${publicPort}\\b`,
-            );
-            if (portRegex.test(combined)) {
-              logger.warn(
-                `[PRE-FLIGHT] Service command appears to set a hardcoded port (${publicPort}). In zero-downtime mode, the application MUST listen on dynamically assigned process.env.PORT!`,
-                { project: projectName, service: config.deploy.service.name, port: publicPort },
-              );
-            }
-          }
+        if (!isDryRun) {
+          await this.runPortPreflight(config, projectName, deploymentId);
         }
       });
 
@@ -244,6 +260,7 @@ export class DeploymentPipelineRunner {
             { project: projectName, deploymentId },
           );
         } else {
+          progress.workspaceMutated = true;
           await this.gitClient.resetHard(workingDir, targetSha);
         }
       });
@@ -253,17 +270,31 @@ export class DeploymentPipelineRunner {
         if (!isDryRun) {
           const updatedConfig = this.reloadConfigFromWorkingDir(workingDir, config);
           if (updatedConfig) {
+            const changed = updatedConfig.configHash !== config.configHash;
             config = updatedConfig;
+            // The committed config may change port or strategy: re-validate against it
+            if (changed) {
+              await this.runPortPreflight(config, projectName, deploymentId);
+            }
           }
         }
       });
 
       if (config.deploy.service.stopBeforeBuild && !isDryRun && !isRelease) {
-        logger.info(`Stopping service '${config.deploy.service.name}' before build steps...`);
-        try {
-          await this.unitupAdapter.stop(config.deploy.service.name);
-        } catch {
-          // Ignore if service was not running
+        if (isZeroDowntimeEnabled(config)) {
+          logger.warn(
+            `Ignoring deploy.service.stopBeforeBuild for '${config.deploy.service.name}': stopping the supervisor would cause downtime in zero-downtime mode.`,
+            { project: projectName, deploymentId },
+          );
+        } else {
+          logger.info(`Stopping service '${config.deploy.service.name}' before build steps...`);
+          this.markCritical(deploymentId);
+          progress.serviceStopped = true;
+          try {
+            await this.unitupAdapter.stop(config.deploy.service.name);
+          } catch {
+            // Ignore if service was not running
+          }
         }
       }
 
@@ -278,6 +309,7 @@ export class DeploymentPipelineRunner {
         isRelease,
         isDryRun,
         abortController.signal,
+        progress,
       );
 
       // Step 7.5: activate-release (only for strategy === 'release')
@@ -303,8 +335,10 @@ export class DeploymentPipelineRunner {
             // ignore if not exists
           }
 
+          this.markCritical(deploymentId);
           fs.symlinkSync(releaseDir, tmpLink, 'dir');
           fs.renameSync(tmpLink, currentLink);
+          progress.releaseActivated = true;
 
           logger.info(`Activated release '${deploymentId}' at '${currentLink}'`, {
             project: projectName,
@@ -318,6 +352,10 @@ export class DeploymentPipelineRunner {
       await this.runStep(deploymentId, 'service-action', async () => {
         if (abortController.signal.aborted) {
           throw new DeployraError('Deployment was aborted before service-action');
+        }
+        if (!isDryRun) {
+          this.markCritical(deploymentId);
+          progress.serviceActionStarted = true;
         }
         const serviceCwd = isRelease ? currentLink : project.path;
         return await this.performServiceAction(serviceCwd, config, isDryRun, payload);
@@ -439,10 +477,7 @@ export class DeploymentPipelineRunner {
       });
     } catch (err: any) {
       const currentStatus = this.deploymentRepo.getDeploymentStatus(deploymentId);
-      const isCancelled =
-        currentStatus === 'cancelled' ||
-        abortController.signal.aborted ||
-        Boolean(err.message?.toLowerCase().includes('cancelled'));
+      const isCancelled = currentStatus === 'cancelled' || abortController.signal.aborted;
 
       this.abortDeployment(deploymentId, err.message || 'Deployment failed');
 
@@ -454,13 +489,23 @@ export class DeploymentPipelineRunner {
             err.message || 'Deployment cancelled',
           );
         }
-        if (isRelease) {
-          this.cleanupOrphanRelease(releaseDir, currentLink, deploymentId, projectName);
-        }
         logger.info(`Deployment #${deploymentId} was cancelled for project '${projectName}'.`, {
           project: projectName,
           deploymentId,
         });
+        // Cancelled after the service was touched (e.g. stopped for install): restore it
+        if (!isDryRun && lockAcquired && isServiceAffected(progress)) {
+          await this.restoreAfterCancellation(
+            deploymentId,
+            projectName,
+            previousSha ?? project.lastSuccessfulSha,
+            config,
+            progress,
+          );
+        }
+        if (isRelease) {
+          this.cleanupOrphanRelease(releaseDir, currentLink, deploymentId, projectName);
+        }
       } else {
         await this.handleDeploymentFailure(
           deploymentId,
@@ -470,9 +515,11 @@ export class DeploymentPipelineRunner {
           config,
           lockAcquired,
           err,
+          progress,
         );
       }
     } finally {
+      if (lockHeartbeat) clearInterval(lockHeartbeat);
       this.activeAbortControllers.delete(deploymentId);
       // Step 11: release-lock (Always executed)
       try {
@@ -535,26 +582,36 @@ export class DeploymentPipelineRunner {
     }
   }
 
-  private resolveDeploymentEnv(
-    workingDir: string,
+  private async runPortPreflight(
     config: NormalizedDeployraConfig,
-  ): Record<string, string> {
-    let fileEnv: Record<string, string> = {};
+    projectName: string,
+    deploymentId: string,
+  ): Promise<void> {
+    if (!(config.deploy.preflight?.portCheck ?? true)) return;
+    const publicPort = config.deploy.port || config.deploy.service.port;
+    if (!isZeroDowntimeEnabled(config) || !publicPort) return;
 
-    if (config.deploy.envFile) {
-      let envFilePath = config.deploy.envFile;
-      if (!path.isAbsolute(envFilePath)) {
-        const candidateInWorking = path.resolve(workingDir, envFilePath);
-        const candidateInProject = path.resolve(config.project.path, envFilePath);
-        envFilePath = fs.existsSync(candidateInWorking) ? candidateInWorking : candidateInProject;
-      }
-      fileEnv = parseEnvFile(envFilePath);
+    const portResult = await checkZeroDowntimePort(config.deploy.service.name, publicPort);
+    if (!portResult.ok && portResult.error) {
+      throw new PreflightError(portResult.error);
+    }
+    if (portResult.warning) {
+      logger.warn(`[PRE-FLIGHT] ${portResult.warning}`, {
+        project: projectName,
+        deploymentId,
+      });
     }
 
-    const merged = { ...fileEnv, ...config.deploy.env };
-    // Automatically register all values into secret masker so they are NEVER logged in cleartext
-    registerSecrets(merged);
-    return merged;
+    const cmd = config.deploy.service.command || '';
+    const script = config.deploy.service.script || '';
+    const combined = `${cmd} ${script}`;
+    const portRegex = new RegExp(`\\bPORT\\s*=\\s*${publicPort}\\b|--port[=\\s]+${publicPort}\\b`);
+    if (portRegex.test(combined)) {
+      logger.warn(
+        `[PRE-FLIGHT] Service command appears to set a hardcoded port (${publicPort}). In zero-downtime mode, the application MUST listen on dynamically assigned process.env.PORT!`,
+        { project: projectName, service: config.deploy.service.name, port: publicPort },
+      );
+    }
   }
 
   private async executeBuildCommands(
@@ -567,8 +624,12 @@ export class DeploymentPipelineRunner {
     isRelease = false,
     isDryRun = false,
     signal?: AbortSignal,
+    progress?: DeploymentProgress,
   ): Promise<void> {
-    const executionEnv = this.resolveDeploymentEnv(workingDir, config);
+    const executionEnv = resolveDeploymentEnv(workingDir, config);
+    // A zero-downtime supervisor keeps serving the old generation from memory; stopping it
+    // here would take the site down and break supervisor ownership of the public port.
+    const shouldStopForInstall = !isDryRun && !isRelease && !isZeroDowntimeEnabled(config);
 
     for (const [stepName, cmdList] of Object.entries(config.deploy.commands)) {
       if (Array.isArray(cmdList) && cmdList.length > 0) {
@@ -577,8 +638,10 @@ export class DeploymentPipelineRunner {
             throw new DeployraError(`Deployment was aborted before step '${stepName}'`);
           }
 
-          if (stepName === 'install' && !isDryRun && !isRelease) {
+          if (stepName === 'install' && shouldStopForInstall) {
             // Stop service before install to release file handles on node_modules
+            this.markCritical(deploymentId);
+            if (progress) progress.serviceStopped = true;
             try {
               await this.unitupAdapter.stop(config.deploy.service.name);
             } catch {
@@ -616,7 +679,11 @@ export class DeploymentPipelineRunner {
                 `Syncing built artifacts from isolated workspace '${workingDir}' to target '${projectPath}'`,
                 { project: projectName, deploymentId },
               );
-              await this.syncIsolatedWorkspace(workingDir, projectPath);
+              await syncIsolatedWorkspace(
+                workingDir,
+                projectPath,
+                resolveSyncExcludes([...config.deploy.syncExclude, config.deploy.envFile]),
+              );
             }
           }
 
@@ -632,12 +699,10 @@ export class DeploymentPipelineRunner {
     isDryRun = false,
     payload?: DeploymentJobPayload,
   ): Promise<string | undefined> {
-    const isZeroDowntime =
-      config.deploy.strategy === 'zero-downtime' ||
-      config.deploy.zeroDowntime ||
-      config.deploy.service.zeroDowntime;
+    const isZeroDowntime = isZeroDowntimeEnabled(config);
     const action = config.deploy.service.action;
     const svcName = config.deploy.service.name;
+    const serviceEnv = resolveServiceEnv(config, projectPath);
 
     if (isZeroDowntime) {
       if (isDryRun) {
@@ -678,6 +743,7 @@ export class DeploymentPipelineRunner {
         drainTimeout: config.deploy.drainTimeoutMs,
         canary: canaryEnabled,
         canaryWeight,
+        ...serviceEnv,
       });
 
       const outMsg = zdResult.isCanary
@@ -702,6 +768,7 @@ export class DeploymentPipelineRunner {
       memoryHigh: config.deploy.service.memoryHigh,
       cpuQuota: config.deploy.service.cpuQuota,
       restartSec: config.deploy.service.restartSec,
+      ...serviceEnv,
     };
 
     if (isDryRun) {
@@ -729,6 +796,7 @@ export class DeploymentPipelineRunner {
     config: NormalizedDeployraConfig,
     lockAcquired: boolean,
     err: any,
+    progress: DeploymentProgress = createDeploymentProgress(),
   ): Promise<void> {
     logger.error(`Deployment #${deploymentId} failed at step: ${err.message}`, {
       project: projectName,
@@ -737,18 +805,18 @@ export class DeploymentPipelineRunner {
 
     this.deploymentRepo.updateStatus(deploymentId, 'failed', err.message);
 
-    const isZeroDowntime =
-      config.deploy.strategy === 'zero-downtime' ||
-      config.deploy.zeroDowntime ||
-      config.deploy.service.zeroDowntime;
+    const isZeroDowntime = isZeroDowntimeEnabled(config);
+    const serviceAffected = isServiceAffected(progress);
 
-    // Trigger rollback if previous successful SHA exists, or if release / zero-downtime strategy is active, lock was acquired, and rollback enabled
+    // Roll back only what this deployment changed: nothing before the workspace reset
+    // (e.g. a pre-flight failure) and no generation switch unless the service action ran.
     const canRollback =
       lockAcquired &&
       config.deploy.rollback.enabled &&
+      (progress.workspaceMutated || serviceAffected) &&
       ((prevSha && prevSha !== targetSha) ||
         config.deploy.strategy === 'release' ||
-        isZeroDowntime);
+        (isZeroDowntime && progress.serviceActionStarted));
 
     const startedAt = this.deploymentRepo.getDeploymentStartedAt(deploymentId);
     const durationMs = startedAt ? Date.now() - startedAt : undefined;
@@ -762,6 +830,8 @@ export class DeploymentPipelineRunner {
           previousSuccessfulSha: prevSha,
           deploymentId,
           config,
+          serviceAffected,
+          revertGeneration: progress.serviceActionStarted,
         });
         this.deploymentRepo.updateStatus(deploymentId, 'rolled_back');
         await this.notificationService.sendDeploymentNotification(config, {
@@ -806,6 +876,38 @@ export class DeploymentPipelineRunner {
       const releaseDir = path.join(releasesDir, deploymentId);
       const currentLink = path.join(config.deploy.workspacePath, 'current');
       this.cleanupOrphanRelease(releaseDir, currentLink, deploymentId, projectName);
+    }
+  }
+
+  private async restoreAfterCancellation(
+    deploymentId: string,
+    projectName: string,
+    prevSha: string | undefined,
+    config: NormalizedDeployraConfig,
+    progress: DeploymentProgress,
+  ): Promise<void> {
+    if (!config.deploy.rollback.enabled) {
+      logger.warn(
+        `Deployment #${deploymentId} was cancelled after touching service '${config.deploy.service.name}' and rollback is disabled; the service may need a manual restart.`,
+        { project: projectName, deploymentId },
+      );
+      return;
+    }
+    try {
+      await this.rollbackManager.rollback({
+        projectName,
+        projectPath: config.project.path,
+        previousSuccessfulSha: prevSha,
+        deploymentId,
+        config,
+        serviceAffected: true,
+        revertGeneration: progress.serviceActionStarted,
+      });
+    } catch (rollbackErr: any) {
+      logger.error(
+        `Could not restore service after cancelling deployment #${deploymentId}: ${rollbackErr.message}`,
+        { project: projectName, deploymentId },
+      );
     }
   }
 
@@ -908,11 +1010,7 @@ export class DeploymentPipelineRunner {
           cwd,
           timeoutMs,
           signal,
-          env: {
-            CI: 'true',
-            FORCE_COLOR: '0',
-            ...env,
-          },
+          env: buildCommandEnv(env ?? {}),
         });
         return [res.stdout, res.stderr].filter(Boolean).join('\n').trim();
       } catch (err: any) {
@@ -969,26 +1067,5 @@ export class DeploymentPipelineRunner {
       );
     }
     return null;
-  }
-
-  private async syncIsolatedWorkspace(sourceDir: string, targetDir: string): Promise<void> {
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
-    try {
-      await safeExec('rsync', [
-        '-av',
-        '--delete',
-        '--exclude=.git',
-        `${sourceDir}/`,
-        `${targetDir}/`,
-      ]);
-    } catch {
-      fs.cpSync(sourceDir, targetDir, {
-        recursive: true,
-        force: true,
-        filter: (src) => !src.includes('/.git'),
-      });
-    }
   }
 }

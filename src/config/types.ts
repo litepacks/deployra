@@ -102,6 +102,7 @@ export interface DeployConfig {
   retry?: RetryConfig;
   envFile?: string; // e.g. '.env.production'
   env?: Record<string, string>; // e.g. { NODE_ENV: 'production' }
+  syncExclude?: string[]; // Paths kept in the target dir during isolated sync, e.g. ['uploads/', 'data/']
   preflight?: PreflightConfig;
   commands?: DeployCommandsConfig;
   service?: DeployServiceConfig;
@@ -134,6 +135,7 @@ export interface WebhookConfig {
   branch?: string;
   allowedIps?: string[]; // e.g. ['127.0.0.1', '192.30.252.0/22', '140.82.112.0/20']
   trustProxy?: boolean; // Whether to trust X-Forwarded-For header
+  allowUnsigned?: boolean; // Accept webhooks without a secret (insecure, default false)
 }
 
 export type NotificationChannelType = 'slack' | 'discord' | 'telegram' | 'webhook';
@@ -199,6 +201,7 @@ export interface NormalizedDeployraConfig {
     branch?: string;
     allowedIps?: string[];
     trustProxy: boolean;
+    allowUnsigned: boolean;
   };
   notifications: NormalizedNotificationChannel[];
   deploy: {
@@ -215,6 +218,7 @@ export interface NormalizedDeployraConfig {
     };
     envFile?: string;
     env: Record<string, string>;
+    syncExclude: string[];
     preflight: {
       diskCheck: boolean;
       minDiskFreeMb?: number;

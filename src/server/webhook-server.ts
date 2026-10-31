@@ -167,6 +167,15 @@ export class WebhookServer {
         this.sendJson(res, 401, { error: 'Invalid webhook signature or secret token' });
         return;
       }
+    } else if (!project.config.webhook?.allowUnsigned) {
+      // Never let unauthenticated requests trigger deployments by default
+      logger.warn(
+        `Rejected unsigned webhook for project '${projectName}': no webhook secret configured. Set webhook.secret (or DEPLOYRA_WEBHOOK_SECRET), or webhook.allowUnsigned: true to accept unsigned requests.`,
+      );
+      this.sendJson(res, 401, {
+        error: 'Webhook secret is not configured for this project; unsigned webhooks are rejected',
+      });
+      return;
     }
 
     // Handle GitHub ping event

@@ -118,18 +118,30 @@ export async function safeExec(
       }, timeoutMs);
     }
 
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdoutBytes += chunk.length;
-      if (stdoutBytes <= maxBuffer) {
-        stdoutChunks.push(chunk);
+    // Keep the most recent output: failures are reported at the end of long build logs
+    const appendTail = (chunks: Buffer[], chunk: Buffer, size: number): number => {
+      chunks.push(chunk);
+      let total = size + chunk.length;
+      while (total > maxBuffer && chunks.length > 0) {
+        const head = chunks[0]!;
+        const excess = total - maxBuffer;
+        if (head.length <= excess) {
+          chunks.shift();
+          total -= head.length;
+        } else {
+          chunks[0] = head.subarray(excess);
+          total -= excess;
+        }
       }
+      return total;
+    };
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdoutBytes = appendTail(stdoutChunks, chunk, stdoutBytes);
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderrBytes += chunk.length;
-      if (stderrBytes <= maxBuffer) {
-        stderrChunks.push(chunk);
-      }
+      stderrBytes = appendTail(stderrChunks, chunk, stderrBytes);
     });
 
     child.on('error', (err) => {

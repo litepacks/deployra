@@ -24,6 +24,21 @@ webhook:
 
 Start the daemon. Deployra will listen on `0.0.0.0:9000` (or configured host/port).
 
+### 🔐 A secret is required
+
+Webhooks are rejected with `401` unless a secret is configured, either per project (`webhook.secret`) or globally (`DEPLOYRA_WEBHOOK_SECRET`). This prevents anyone who can reach the receiver from triggering deployments.
+
+If you deliberately accept unsigned requests (for example behind a private network with `allowedIps`), opt in explicitly:
+
+```yaml
+webhook:
+  allowUnsigned: true   # insecure: accepts webhooks without a signature or token
+  allowedIps:
+    - 10.0.0.0/8
+```
+
+Redelivered webhooks for a commit that is already queued or deploying are skipped instead of creating a duplicate deployment.
+
 ---
 
 ## 🐙 GitHub Integration

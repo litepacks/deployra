@@ -282,6 +282,18 @@ export class SourceWatcher {
 
       const activeDeps = this.deploymentRepo.getActiveDeploymentSummaries(projectName);
 
+      // Webhook providers retry and redeliver: never queue a second deployment of the same commit
+      if (triggerType === 'webhook') {
+        const existingSameShaDep = activeDeps.find((dep) => isSameSha(dep.targetSha, remoteSha));
+        if (existingSameShaDep) {
+          logger.info(
+            `Webhook for project '${projectName}' (SHA: ${remoteSha}) matches active deployment #${existingSameShaDep.id}. Skipping duplicate.`,
+            { project: projectName, deploymentId: existingSameShaDep.id },
+          );
+          return null;
+        }
+      }
+
       // Deduplication & Self-Repair logic on polling
       if (triggerType === 'poll') {
         const existingSameShaDep = activeDeps.find((dep) => isSameSha(dep.targetSha, remoteSha));

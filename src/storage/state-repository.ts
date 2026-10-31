@@ -47,6 +47,17 @@ export class StateRepository {
     }
   }
 
+  /**
+   * Heartbeat for a held lock so long-running deployments are not treated as stale.
+   */
+  public refreshLock(rawProjectName: string, lockedBy: string): boolean {
+    const projectName = sanitizeProjectName(rawProjectName);
+    const res = getPreparedStatement(
+      `UPDATE project_locks SET locked_at = ? WHERE (project_name = ? OR project_name = ?) AND locked_by = ?`,
+    ).run(Date.now(), projectName, rawProjectName, lockedBy);
+    return res.changes > 0;
+  }
+
   public releaseLock(rawProjectName: string, lockedBy?: string): boolean {
     const projectName = sanitizeProjectName(rawProjectName);
     if (lockedBy) {

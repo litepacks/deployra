@@ -94,6 +94,7 @@ describe('Webhook Receiver & Security', () => {
     projRepo.saveProject(
       normalizeAndValidateConfig({
         project: { name: 'ping-app', path: path.join(tempDir, 'ping') },
+        webhook: { allowUnsigned: true },
       }),
     );
 
@@ -248,6 +249,7 @@ describe('Webhook Receiver & Security', () => {
       normalizeAndValidateConfig({
         project: { name: 'branch-filter-app', path: path.join(tempDir, 'filter') },
         source: { remote: 'origin', branch: 'production' },
+        webhook: { allowUnsigned: true },
       }),
     );
 
@@ -274,6 +276,39 @@ describe('Webhook Receiver & Security', () => {
     // No deployment should be created
     const deps = depRepo.getDeploymentsByProject('branch-filter-app');
     expect(deps.length).toBe(0);
+  });
+
+  it('rejects unsigned webhooks when no secret is configured', async () => {
+    const projRepo = new ProjectRepository();
+    const depRepo = new DeploymentRepository();
+    const prevGlobal = process.env.DEPLOYRA_WEBHOOK_SECRET;
+    delete process.env.DEPLOYRA_WEBHOOK_SECRET;
+
+    projRepo.saveProject(
+      normalizeAndValidateConfig({
+        project: { name: 'open-app', path: path.join(tempDir, 'open') },
+      }),
+    );
+
+    const engine = new WorkmaticEngine({ dbPath: workmaticDbPath });
+    const watcher = new SourceWatcher(engine);
+    server = new WebhookServer({ port: 0, sourceWatcher: watcher });
+    const port = await server.start();
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/v1/webhook/open-app`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ref: 'refs/heads/main', after: 'a'.repeat(40) }),
+      });
+
+      expect(res.status).toBe(401);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain('not configured');
+      expect(depRepo.getLatestDeployment('open-app')).toBeFalsy();
+    } finally {
+      if (prevGlobal !== undefined) process.env.DEPLOYRA_WEBHOOK_SECRET = prevGlobal;
+    }
   });
 
   it('integrates webhook server inside DeployraDaemon lifecycle', async () => {

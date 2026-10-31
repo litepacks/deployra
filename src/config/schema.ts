@@ -182,6 +182,7 @@ export const deployraConfigSchema = z.object({
         .default({ attempts: 2, backoff: '10s' }),
       envFile: z.string().optional(),
       env: z.record(z.string(), z.string()).default({}),
+      syncExclude: z.array(z.string()).default([]),
       preflight: preflightConfigSchema.default({ diskCheck: true, maxDiskUsagePercent: 98 }),
       commands: z.record(z.string(), z.array(z.string())).default({ install: [], build: [] }),
       port: z.number().int().min(1).max(65535).optional(),
@@ -231,6 +232,7 @@ export const deployraConfigSchema = z.object({
       branch: z.string().optional(),
       allowedIps: z.array(z.string()).optional(),
       trustProxy: z.boolean().default(false),
+      allowUnsigned: z.boolean().default(false),
     })
     .optional(),
   notifications: notificationsConfigSchema.optional(),
@@ -280,6 +282,7 @@ function normalizeWebhookConfig(webhook?: {
   branch?: string;
   allowedIps?: string[];
   trustProxy?: boolean;
+  allowUnsigned?: boolean;
 }): NormalizedDeployraConfig['webhook'] {
   if (!webhook) return undefined;
   let secret = webhook.secret;
@@ -292,6 +295,7 @@ function normalizeWebhookConfig(webhook?: {
     branch: webhook.branch,
     allowedIps: webhook.allowedIps,
     trustProxy: Boolean(webhook.trustProxy),
+    allowUnsigned: Boolean(webhook.allowUnsigned),
   };
 }
 
@@ -477,6 +481,7 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
       },
       envFile: data.deploy.envFile,
       env: normalizedEnv,
+      syncExclude: data.deploy.syncExclude,
       preflight: {
         diskCheck: data.deploy.preflight?.diskCheck ?? true,
         minDiskFreeMb: data.deploy.preflight?.minDiskFreeMb,

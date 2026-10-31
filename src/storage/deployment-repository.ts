@@ -405,9 +405,10 @@ export class DeploymentRepository {
   public cancelPendingDeployments(
     projectName: string,
     reason: string,
+    excludeIds: string[] = [],
   ): Array<{ id: string; status: DeploymentStatus }> {
     const active = this.getActiveDeploymentSummaries(projectName).filter(
-      (d) => d.status === 'queued' || d.status === 'running',
+      (d) => (d.status === 'queued' || d.status === 'running') && !excludeIds.includes(d.id),
     );
     if (active.length === 0) return [];
 

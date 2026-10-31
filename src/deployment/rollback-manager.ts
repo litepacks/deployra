@@ -7,6 +7,9 @@ import { logger } from '../logging/logger.js';
 import { ReadyCheckerAdapter } from '../readiness/ready-checker-adapter.js';
 import { parseCommandString, UnitupAdapter } from '../runtime/unitup-adapter.js';
 import { safeExec } from '../security/exec.js';
+import { buildCommandEnv, resolveDeploymentEnv, resolveServiceEnv } from './deploy-env.js';
+import { isZeroDowntimeEnabled } from './strategy.js';
+import { resolveSyncExcludes, syncIsolatedWorkspace } from './workspace-sync.js';
 
 export class RollbackManager {
   private gitClient = new GitClient();
@@ -19,7 +22,13 @@ export class RollbackManager {
     previousSuccessfulSha?: string;
     deploymentId?: string;
     config: NormalizedDeployraConfig;
+    /** The failed deployment stopped, restarted or re-pointed the service. Default true (manual rollback). */
+    serviceAffected?: boolean;
+    /** A new zero-downtime generation was (possibly) activated and must be switched back. Default true. */
+    revertGeneration?: boolean;
   }): Promise<void> {
+    const serviceAffected = data.serviceAffected ?? true;
+    const revertGeneration = data.revertGeneration ?? true;
     logger.warn(
       `Initiating automated rollback for project '${data.projectName}'${data.previousSuccessfulSha ? ` to SHA ${data.previousSuccessfulSha}` : ''}`,
       {
@@ -87,9 +96,17 @@ export class RollbackManager {
               }
             }
 
+            if (!serviceAffected) {
+              logger.info(
+                `Service '${data.config.deploy.service.name}' was not touched by the failed deployment; skipping restart.`,
+                { project: data.projectName },
+              );
+              return;
+            }
             if (data.config.deploy.service.action !== 'none') {
               await this.unitupAdapter.restart(data.config.deploy.service.name, {
                 cwd: currentLink,
+                ...resolveServiceEnv(data.config, currentLink),
               });
             }
             if (data.config.deploy.ready.checks.length > 0) {
@@ -103,13 +120,10 @@ export class RollbackManager {
       }
     }
 
-    const isZeroDowntime =
-      data.config.deploy.strategy === 'zero-downtime' ||
-      data.config.deploy.zeroDowntime ||
-      data.config.deploy.service.zeroDowntime;
+    const isZeroDowntime = isZeroDowntimeEnabled(data.config);
 
     if (!data.previousSuccessfulSha) {
-      if (isZeroDowntime) {
+      if (isZeroDowntime && revertGeneration) {
         logger.info(
           `Rolling back zero-downtime service '${data.config.deploy.service.name}' to previous active generation...`,
           { project: data.projectName },
@@ -137,27 +151,63 @@ export class RollbackManager {
         await this.gitClient.cleanUntracked(workingDir);
       }
 
-      // 2. Re-run install and build commands if configured
-      for (const cmdStr of data.config.deploy.commands.install || []) {
+      // 2. Re-run install and build commands with the same environment as a deployment
+      const commandEnv = buildCommandEnv(resolveDeploymentEnv(workingDir, data.config));
+      const execOpts = {
+        cwd: workingDir,
+        env: commandEnv,
+        timeoutMs: data.config.deploy.timeoutMs,
+      };
+      const installCommands = data.config.deploy.commands.install || [];
+      if (installCommands.length > 0 && !isZeroDowntime && !isIsolated && serviceAffected) {
+        // Same as a deployment: release node_modules file handles held by the old process
+        try {
+          await this.unitupAdapter.stop(data.config.deploy.service.name);
+        } catch {
+          // Service may already be stopped
+        }
+      }
+      for (const cmdStr of installCommands) {
         const parsed = parseCommandString(cmdStr);
-        await safeExec(parsed.command, parsed.args || [], { cwd: workingDir });
+        await safeExec(parsed.command, parsed.args || [], execOpts);
       }
 
       for (const cmdStr of data.config.deploy.commands.build || []) {
         const parsed = parseCommandString(cmdStr);
-        await safeExec(parsed.command, parsed.args || [], { cwd: workingDir });
+        await safeExec(parsed.command, parsed.args || [], execOpts);
       }
 
       if (isIsolated && fs.existsSync(workingDir)) {
-        await this.syncIsolatedWorkspace(workingDir, data.projectPath);
+        await syncIsolatedWorkspace(
+          workingDir,
+          data.projectPath,
+          resolveSyncExcludes([...data.config.deploy.syncExclude, data.config.deploy.envFile]),
+        );
+      }
+
+      if (!serviceAffected) {
+        logger.info(
+          `Rollback restored files for project '${data.projectName}'; service was not touched by the failed deployment, so it is left running.`,
+          { project: data.projectName },
+        );
+        return;
       }
 
       // 3. Restart or rollback service via Unitup
       if (data.config.deploy.service.action !== 'none') {
         if (isZeroDowntime) {
-          await this.unitupAdapter.rollbackZeroDowntime(data.config.deploy.service.name);
+          if (revertGeneration) {
+            await this.unitupAdapter.rollbackZeroDowntime(data.config.deploy.service.name);
+          }
         } else {
-          await this.unitupAdapter.restart(data.config.deploy.service.name);
+          await this.unitupAdapter.restart(data.config.deploy.service.name, {
+            cwd: data.projectPath,
+            script: data.config.deploy.service.script,
+            command: data.config.deploy.service.command,
+            memoryMax: data.config.deploy.service.memoryMax,
+            memoryHigh: data.config.deploy.service.memoryHigh,
+            ...resolveServiceEnv(data.config, data.projectPath),
+          });
         }
       }
 
@@ -176,27 +226,6 @@ export class RollbackManager {
       throw new RollbackError(
         `Automated rollback failed for project '${data.projectName}': ${err.message}`,
       );
-    }
-  }
-
-  private async syncIsolatedWorkspace(sourceDir: string, targetDir: string): Promise<void> {
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
-    try {
-      await safeExec('rsync', [
-        '-av',
-        '--delete',
-        '--exclude=.git',
-        `${sourceDir}/`,
-        `${targetDir}/`,
-      ]);
-    } catch {
-      fs.cpSync(sourceDir, targetDir, {
-        recursive: true,
-        force: true,
-        filter: (src) => !src.includes('/.git'),
-      });
     }
   }
 }

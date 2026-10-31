@@ -9,6 +9,7 @@ import {
   defaultRollbackManager,
   generations,
   getServiceStatus,
+  getUnitPath,
   getUnitupDir,
   IPCClient,
   isUserSystemdAvailable,
@@ -183,6 +184,35 @@ function isNonFatalSystemdError(err: any): boolean {
   );
 }
 
+function formatUnitEnvLine(key: string, value: string): string {
+  // Mirrors unitup's formatSystemdEnv escaping
+  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '$$$$');
+  return `Environment=${key}="${escaped}"`;
+}
+
+/**
+ * Whether the registered systemd unit already carries the desired runtime env.
+ * Unitup does not persist env in its app metadata, so the unit file is the source of truth.
+ */
+function serviceEnvMatches(
+  service: string,
+  options?: { env?: Record<string, string>; envFile?: string },
+): boolean {
+  let content: string;
+  try {
+    content = fs.readFileSync(getUnitPath(service), 'utf8');
+  } catch {
+    return true;
+  }
+  const lines = new Set(content.split('\n').map((l) => l.trim()));
+  for (const [key, value] of Object.entries(options?.env ?? {})) {
+    if (!lines.has(formatUnitEnvLine(key, value))) return false;
+  }
+  const envFileLine = [...lines].find((l) => l.startsWith('EnvironmentFile='));
+  const currentEnvFile = envFileLine ? envFileLine.slice('EnvironmentFile='.length) : undefined;
+  return currentEnvFile === (options?.envFile || undefined);
+}
+
 export class UnitupAdapter implements RuntimeManager {
   private systemdAvailabilityCache?: boolean;
   private systemdCheckPromise?: Promise<boolean>;
@@ -251,6 +281,12 @@ export class UnitupAdapter implements RuntimeManager {
 
       if (options?.port) {
         servicePayload.port = options.port;
+      }
+      if (options?.env) {
+        servicePayload.env = options.env;
+      }
+      if (options?.envFile) {
+        servicePayload.envFile = options.envFile;
       }
       if (options?.zeroDowntime) {
         servicePayload.zeroDowntime = true;
@@ -515,8 +551,15 @@ export class UnitupAdapter implements RuntimeManager {
       const existingMeta = readAppMetadata(service);
       const isZeroDowntimeConfigured = Boolean((existingMeta as any)?.deploy?.zeroDowntime);
       const portMatches = !options?.publicPort || existingMeta?.port === options.publicPort;
+      const envMatches = serviceEnvMatches(service, options);
+      if (existingMeta && isZeroDowntimeConfigured && !envMatches) {
+        logger.warn(
+          `[ZERO-DOWNTIME] Runtime environment for '${service}' changed; re-registering the supervisor (brief restart).`,
+          { service },
+        );
+      }
 
-      if (!unitFileExists(service) || !isZeroDowntimeConfigured || !portMatches) {
+      if (!unitFileExists(service) || !isZeroDowntimeConfigured || !portMatches || !envMatches) {
         const registered = await this.upsertService(
           service,
           {
@@ -526,6 +569,8 @@ export class UnitupAdapter implements RuntimeManager {
             port: options?.publicPort,
             zeroDowntime: true,
             drainTimeout: options?.drainTimeout,
+            env: options?.env,
+            envFile: options?.envFile,
           },
           true,
         );
@@ -535,6 +580,19 @@ export class UnitupAdapter implements RuntimeManager {
         if (registered && !(await this.waitForSupervisor(service))) {
           throw new RuntimeError(
             `Unitup supervisor for '${service}' did not become reachable on IPC after (re)registering the service. Check 'unitup logs ${service}'.`,
+          );
+        }
+      } else if (!(await new IPCClient(service).isAlive())) {
+        // Unit is registered for zero-downtime but its supervisor is down (stopped or crashed).
+        // Bring it back under systemd instead of letting Unitup deploy inside this process.
+        logger.warn(
+          `[ZERO-DOWNTIME] Supervisor for '${service}' is not running; starting the systemd unit.`,
+          { service },
+        );
+        await startService(service);
+        if (!(await this.waitForSupervisor(service))) {
+          throw new RuntimeError(
+            `Unitup supervisor for '${service}' did not become reachable on IPC after starting the service. Check 'unitup logs ${service}'.`,
           );
         }
       }
@@ -557,6 +615,7 @@ export class UnitupAdapter implements RuntimeManager {
         script: entry.script,
         cwd,
         port: options?.publicPort,
+        env: options?.env,
         logs: {
           stdout: path.join(logsDir, `${safeName}.log`),
           stderr: path.join(logsDir, `${safeName}-error.log`),

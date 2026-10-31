@@ -27,6 +27,14 @@ deploy:
   
   # Directory settings
   workspacePath: /var/www/my-app # Used for isolated or release builds
+  syncExclude:                   # Isolated strategy: kept in project.path during sync (never overwritten or deleted)
+    - uploads/                   # .git, .env, .env.* and deploy.envFile are always kept
+    - data/
+
+  # Environment (build commands AND the running service)
+  envFile: .env.production       # Loaded by systemd (EnvironmentFile=), not copied into the unit file
+  env:
+    NODE_ENV: production
   releasesToKeep: 5              # Retain last N releases (for release strategy)
   sharedPaths:                   # Symlinked shared folders & files across releases
     - .env

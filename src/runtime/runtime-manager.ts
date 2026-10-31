@@ -34,6 +34,8 @@ export interface ZeroDowntimeOptions {
   drainTimeout?: number;
   canary?: boolean;
   canaryWeight?: number | string;
+  env?: Record<string, string>;
+  envFile?: string;
   onProgress?: (evt: any) => void;
 }
 
@@ -73,6 +75,8 @@ export interface ServiceOptions {
   memoryHigh?: string;
   cpuQuota?: string;
   restartSec?: string;
+  env?: Record<string, string>;
+  envFile?: string; // Absolute path, loaded by systemd (EnvironmentFile=)
 }
 
 export interface AppLogOptions {

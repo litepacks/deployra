@@ -5,6 +5,26 @@ All notable changes to Deployra will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ⚠️ Breaking
+- **Webhooks require a secret by default**: requests are rejected with `401` when neither `webhook.secret` nor `DEPLOYRA_WEBHOOK_SECRET` is set. Set `webhook.allowUnsigned: true` to keep accepting unsigned webhooks.
+- **Runtime env reaches the service**: `deploy.env` and `deploy.envFile` are now passed to the managed service (`Environment=` / `EnvironmentFile=`), not only to build commands. Zero-downtime services are re-registered once (brief restart) when this env changes.
+
+### 🐛 Fixes
+- **Zero-downtime migration**: a public port held by the service's own non-zero-downtime unit is migrated to supervisor mode instead of failing pre-flight; Deployra waits for the supervisor IPC socket before deploying.
+- **No downtime from `install` in zero-downtime mode**: the supervisor is no longer stopped before `install`, and `stopBeforeBuild` is ignored with a warning. A registered but stopped supervisor is started under systemd instead of deploying inside the Deployra process.
+- **Rollback only undoes what changed**: failures before the workspace reset (e.g. pre-flight) no longer roll back; zero-downtime generations are only switched back if the service action ran; the service is not restarted when the failed deployment never touched it.
+- **Rollback rebuilds like a deployment**: rollback `install`/`build` commands get `deploy.env`, `envFile`, `CI=true` and `deploy.timeout`.
+- **Isolated sync keeps runtime files**: `rsync --delete` no longer removes `.env`, `.env.*`, `deploy.envFile` or paths listed in the new `deploy.syncExclude`. The copy fallback no longer skips `.github` / `.gitignore`.
+- **Project lock heartbeat**: locks are refreshed every 30s, so builds longer than 5 minutes cannot be overtaken by a second deployment.
+- **Safe superseding (`queueMode: latest`)**: a deployment that already stopped or switched the service runs to completion instead of being aborted halfway; an explicitly cancelled deployment restores the service.
+- **Pre-flight uses the committed config**: the port check re-runs after `refresh-config` when the config changed and honours `service.zeroDowntime`.
+- **Cancellation detection** no longer treats any error message containing "cancelled" as a cancellation (which skipped rollback).
+- **Command output** keeps the last 10 MB instead of the first, so build errors at the end of long logs are preserved.
+
+---
+
 ## [0.4.5] - 2026-10-18
 
 ### 🛡️ Port Conflict Prevention, Self-Healing & Supervisor Defense
