@@ -75,6 +75,42 @@ describe('Port Conflict & Supervisor Defense Suite', () => {
         `Public port ${busyPort} is already occupied by an external or unmanaged process`,
       );
     });
+
+    it('allows migration when the port is held by the service own non-zero-downtime unit', async () => {
+      const busyPort = await startServer();
+      const detectLegacyUnit = vi.fn(async () => true);
+
+      const res = await checkZeroDowntimePort('legacy-svc', busyPort, { detectLegacyUnit });
+      expect(detectLegacyUnit).toHaveBeenCalledWith('legacy-svc');
+      expect(res.ok).toBe(true);
+      expect(res.isOccupied).toBe(true);
+      expect(res.isSupervisorActive).toBe(false);
+      expect(res.isLegacyUnit).toBe(true);
+      expect(res.error).toBeUndefined();
+      expect(res.warning).toContain('migrated to Unitup supervisor mode');
+    });
+
+    it('still rejects when no legacy unit owns the occupied port', async () => {
+      const busyPort = await startServer();
+
+      const res = await checkZeroDowntimePort('foreign-svc', busyPort, {
+        detectLegacyUnit: async () => false,
+      });
+      expect(res.ok).toBe(false);
+      expect(res.isLegacyUnit).toBeUndefined();
+    });
+
+    it('does not consult legacy detection when the port is free', async () => {
+      const srv = http.createServer();
+      await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', () => resolve()));
+      const freePort = (srv.address() as net.AddressInfo).port;
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+      const detectLegacyUnit = vi.fn(async () => true);
+
+      const res = await checkZeroDowntimePort('free-svc', freePort, { detectLegacyUnit });
+      expect(res.ok).toBe(true);
+      expect(detectLegacyUnit).not.toHaveBeenCalled();
+    });
   });
 
   describe('3. Configuration Schema & Normalization', () => {

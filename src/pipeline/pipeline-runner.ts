@@ -166,6 +166,12 @@ export class DeploymentPipelineRunner {
             if (!portResult.ok && portResult.error) {
               throw new PreflightError(portResult.error);
             }
+            if (portResult.warning) {
+              logger.warn(`[PRE-FLIGHT] ${portResult.warning}`, {
+                project: projectName,
+                deploymentId,
+              });
+            }
 
             const cmd = config.deploy.service.command || '';
             const script = config.deploy.service.script || '';

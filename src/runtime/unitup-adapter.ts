@@ -10,6 +10,7 @@ import {
   generations,
   getServiceStatus,
   getUnitupDir,
+  IPCClient,
   isUserSystemdAvailable,
   readAppMetadata,
   readServiceLogs,
@@ -220,7 +221,7 @@ export class UnitupAdapter implements RuntimeManager {
     service: string,
     options?: ServiceOptions,
     shouldStart = true,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const cwd = options?.cwd || process.cwd();
     const entry = resolveEntryPoint(cwd, options?.script, options?.command);
 
@@ -263,16 +264,31 @@ export class UnitupAdapter implements RuntimeManager {
       logger.info(`Successfully created/updated service '${service}' via unitup!`, {
         service,
       });
+      return true;
     } catch (err: any) {
       if (isNonFatalSystemdError(err)) {
         logger.warn(
           `Systemd daemon reload or user D-Bus is inactive (${err.message}). Simulating service action for '${service}'.`,
           { service },
         );
-        return;
+        return false;
       }
       throw new RuntimeError(`Unitup failed to create/update service '${service}': ${err.message}`);
     }
+  }
+
+  private async waitForSupervisor(
+    service: string,
+    timeoutMs = 20000,
+    intervalMs = 250,
+  ): Promise<boolean> {
+    const ipc = new IPCClient(service);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await ipc.isAlive()) return true;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return false;
   }
 
   public async start(service: string, options?: ServiceOptions): Promise<void> {
@@ -490,6 +506,9 @@ export class UnitupAdapter implements RuntimeManager {
         if (!portResult.ok && portResult.error) {
           throw new RuntimeError(`Unitup zero-downtime deployment failed: ${portResult.error}`);
         }
+        if (portResult.warning) {
+          logger.warn(`[ZERO-DOWNTIME] ${portResult.warning}`, { service });
+        }
       }
 
       // If service unit does not exist yet or needs registration, ensure it's registered
@@ -498,7 +517,7 @@ export class UnitupAdapter implements RuntimeManager {
       const portMatches = !options?.publicPort || existingMeta?.port === options.publicPort;
 
       if (!unitFileExists(service) || !isZeroDowntimeConfigured || !portMatches) {
-        await this.upsertService(
+        const registered = await this.upsertService(
           service,
           {
             cwd,
@@ -510,6 +529,14 @@ export class UnitupAdapter implements RuntimeManager {
           },
           true,
         );
+
+        // The (re)started supervisor must own the public port before we deploy; otherwise
+        // Unitup falls back to an in-process deploy that races the supervisor for the port.
+        if (registered && !(await this.waitForSupervisor(service))) {
+          throw new RuntimeError(
+            `Unitup supervisor for '${service}' did not become reachable on IPC after (re)registering the service. Check 'unitup logs ${service}'.`,
+          );
+        }
       }
 
       let command = entry.command;
