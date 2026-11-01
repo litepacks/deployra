@@ -9,6 +9,7 @@ import {
   defaultRollbackManager,
   generations,
   getServiceStatus,
+  getUnitFilename,
   getUnitPath,
   getUnitupDir,
   IPCClient,
@@ -24,6 +25,7 @@ import {
 } from 'unitup';
 import { RuntimeError } from '../errors/deployra-error.js';
 import { logger } from '../logging/logger.js';
+import { safeExec } from '../security/exec.js';
 import { checkZeroDowntimePort } from '../security/port-check.js';
 import type {
   AppLogOptions,
@@ -325,6 +327,56 @@ export class UnitupAdapter implements RuntimeManager {
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
     return false;
+  }
+
+  /**
+   * Brings an already registered unit back up without re-registering it, so the unit keeps
+   * its supervisor mode, env and resource settings. Used by the self-repair watchdog.
+   */
+  public async recover(
+    service: string,
+    options: { zeroDowntime?: boolean; restart?: boolean } = {},
+  ): Promise<void> {
+    const isAvailable =
+      this.systemdAvailabilityCache !== undefined
+        ? this.systemdAvailabilityCache
+        : await this.isSystemdAvailable();
+    if (!isAvailable) {
+      logger.warn(
+        `Systemd is not available on this platform. Simulating service recovery for '${service}'.`,
+      );
+      return;
+    }
+    if (!unitFileExists(service)) {
+      throw new RuntimeError(
+        `Cannot recover service '${service}': its systemd unit is not registered. Redeploy the project to recreate it.`,
+      );
+    }
+
+    // A unit that crash-looped past StartLimitBurst refuses to start until reset
+    try {
+      await safeExec('systemctl', ['--user', 'reset-failed', getUnitFilename(service)], {
+        timeoutMs: 10000,
+      });
+    } catch {
+      // Not in failed state, or systemctl unavailable: start/restart reports real errors
+    }
+
+    try {
+      if (options.restart) {
+        await restartService(service);
+      } else {
+        await startService(service);
+      }
+    } catch (err: any) {
+      throw new RuntimeError(`Unitup failed to recover service '${service}': ${err.message}`);
+    }
+
+    if (options.zeroDowntime && !(await this.waitForSupervisor(service))) {
+      throw new RuntimeError(
+        `Unitup supervisor for '${service}' did not become reachable on IPC after recovery.`,
+      );
+    }
   }
 
   public async start(service: string, options?: ServiceOptions): Promise<void> {

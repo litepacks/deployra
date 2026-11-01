@@ -2,6 +2,7 @@ import { GitClient } from './git/git-client.js';
 import { WorkmaticEngine } from './jobs/workmatic-engine.js';
 import { logger } from './logging/logger.js';
 import { DeploymentPipelineRunner } from './pipeline/pipeline-runner.js';
+import { ServiceHealer } from './repair/service-healer.js';
 import { UnitupAdapter } from './runtime/unitup-adapter.js';
 import { assertNonRootUser } from './security/path-validator.js';
 import { WebhookServer } from './server/webhook-server.js';
@@ -10,6 +11,9 @@ import { DeploymentRepository } from './storage/deployment-repository.js';
 import { ProjectRepository } from './storage/project-repository.js';
 import { StateRepository } from './storage/state-repository.js';
 import { SourceWatcher } from './watcher/source-watcher.js';
+
+/** Queued deployments not picked up within this window (with free worker slots) are failed. */
+export const STALE_QUEUED_MS = 15 * 60 * 1000;
 
 export interface DaemonOptions {
   concurrency?: number;
@@ -32,6 +36,8 @@ export class DeployraDaemon {
   private daemonOptions?: DaemonOptions;
   private selfRepairTimer?: NodeJS.Timeout;
   private isShuttingDown = false;
+  private isRepairCycleRunning = false;
+  private serviceHealer: ServiceHealer;
 
   constructor(options?: DaemonOptions) {
     this.daemonOptions = options;
@@ -44,6 +50,10 @@ export class DeployraDaemon {
     this.deploymentRepo = new DeploymentRepository();
     this.unitupAdapter = new UnitupAdapter();
     this.gitClient = new GitClient();
+    this.serviceHealer = new ServiceHealer({
+      unitupAdapter: this.unitupAdapter,
+      deploymentRepo: this.deploymentRepo,
+    });
   }
 
   public getConcurrency(): number {
@@ -117,11 +127,15 @@ export class DeployraDaemon {
   private startSelfRepairWatchdog(dryRun = false): void {
     const intervalMs = this.daemonOptions?.watchdogIntervalMs ?? 30000;
     this.selfRepairTimer = setInterval(async () => {
-      if (this.isShuttingDown) return;
+      // Recovery can wait on ready checks longer than the interval: never overlap cycles
+      if (this.isShuttingDown || this.isRepairCycleRunning) return;
+      this.isRepairCycleRunning = true;
       try {
         await this.runSelfRepairCycle(dryRun);
       } catch (err: any) {
         logger.error(`Error in self-repair watchdog cycle: ${err.message}`);
+      } finally {
+        this.isRepairCycleRunning = false;
       }
     }, intervalMs);
   }
@@ -134,10 +148,23 @@ export class DeployraDaemon {
       logger.info(`[SELF-REPAIR] Pruned ${pruned} stale project lock(s)`);
     }
 
-    // 2. Clean up timed-out deployments
-    const staleDeps = this.deploymentRepo.cleanupStaleJobs(15 * 60 * 1000);
+    // 2. Fail deployments no live worker owns (a still-running build is never touched)
+    const staleDeps = this.deploymentRepo.cleanupStaleJobs(15 * 60 * 1000, activeRunningIds);
     if (staleDeps > 0) {
-      logger.warn(`[SELF-REPAIR] Cleaned up ${staleDeps} timed-out running deployment(s)`);
+      logger.warn(`[SELF-REPAIR] Cleaned up ${staleDeps} orphaned running deployment(s)`);
+    }
+
+    // 2b. Queued deployments the worker never picked up although it had free slots
+    if (activeRunningIds.size < this.workmaticEngine.getConcurrency()) {
+      const lostQueued = this.deploymentRepo.failStaleQueuedDeployments(
+        STALE_QUEUED_MS,
+        activeRunningIds,
+      );
+      if (lostQueued > 0) {
+        logger.warn(
+          `[SELF-REPAIR] Failed ${lostQueued} deployment(s) stuck in queue; the watcher will retry them.`,
+        );
+      }
     }
 
     // 3. Auto-retention prune (keep max 100 per project or 30 days) and compact database
@@ -148,53 +175,15 @@ export class DeployraDaemon {
       // ignore background auto-prune error
     }
 
-    // 4. Check service liveness and auto-heal crashed services
+    // 4. Recover services that crashed or stopped responding (backoff, limit, alert)
     if (!dryRun) {
-      const projects = this.projectRepo.getAllProjects();
-      for (const proj of projects) {
-        const svcName = proj.config?.deploy?.service?.name;
-        const svcAction = proj.config?.deploy?.service?.action;
-        if (!svcName || svcAction === 'none') continue;
-
-        // Don't restart service if project is currently running an active deployment
-        if (this.deploymentRepo.hasActiveDeployments(proj.name)) continue;
-
-        // Only heal if project has at least 1 successful deployment
-        if (!proj.lastSuccessfulSha) continue;
-
+      for (const proj of this.projectRepo.getAllProjects()) {
+        if (this.isShuttingDown) break;
         try {
-          const status = await this.unitupAdapter.status(svcName);
-          if (!status.active && status.subState !== 'query_failed') {
-            logger.warn(
-              `[SELF-REPAIR] Service '${svcName}' for project '${proj.name}' is down (${status.subState || 'inactive'}). Attempting auto-recovery...`,
-              { project: proj.name, service: svcName },
-            );
-
-            const isRelease = proj.config.deploy.strategy === 'release';
-            const currentLink = `${proj.config.deploy.workspacePath}/current`;
-            const serviceCwd = isRelease ? currentLink : proj.path;
-
-            await this.unitupAdapter.start(svcName, {
-              cwd: serviceCwd,
-              script: proj.config.deploy.service.script,
-              command: proj.config.deploy.service.command,
-              memoryMax: proj.config.deploy.service.memoryMax,
-              memoryHigh: proj.config.deploy.service.memoryHigh,
-              cpuQuota: proj.config.deploy.service.cpuQuota,
-              restartSec: proj.config.deploy.service.restartSec,
-            });
-
-            logger.info(
-              `[SELF-REPAIR] Successfully restarted service '${svcName}' for '${proj.name}'!`,
-              {
-                project: proj.name,
-                service: svcName,
-              },
-            );
-          }
+          await this.serviceHealer.check(proj);
         } catch (svcErr: any) {
           logger.warn(
-            `[SELF-REPAIR] Could not auto-recover service '${svcName}': ${svcErr.message}`,
+            `[SELF-REPAIR] Service check failed for project '${proj.name}': ${svcErr.message}`,
           );
         }
       }

@@ -5,6 +5,22 @@ All notable changes to Deployra will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 🐛 Fixes
+- **Deployments stuck in `queued`**: the job worker used workmatic's default 30s lease, which is never renewed. Any deployment longer than 30s was re-claimed repeatedly; the copies filled every worker slot behind the project chain, starving all other deployments, and later re-ran the finished deployment. The lease now defaults to 6 hours (`DEPLOYRA_JOB_LEASE_MS` overrides it), duplicate deliveries of a running deployment are dropped immediately, and only `queued` deployments are ever executed.
+- A job picked up without a configured pipeline runner now marks its deployment `failed` instead of leaving it `queued`.
+
+### 🛡️ Self-Repair
+- **Service healing no longer breaks units**: crashed services are started from their existing systemd unit instead of being re-registered, so zero-downtime services stay in supervisor mode and keep their env. Start-limit `failed` units are reset first.
+- **Backoff, limit and alert**: failed recoveries are retried with exponential backoff (30s → 15m); after `selfRepair.maxRestarts` consecutive failures Deployra gives up and sends one failure notification instead of restarting every 30s forever.
+- **Health-based recovery**: running services whose `deploy.ready` checks fail `selfRepair.healthFailureThreshold` times in a row are restarted; every recovery is verified with the ready checks.
+- **New `selfRepair` config** (`enabled`, `healthCheck`, `healthFailureThreshold`, `maxRestarts`) to tune or disable healing per project.
+- **Watchdog safety**: cycles never overlap; running deployments the worker still owns are no longer failed after 15 minutes; queued deployments never picked up (with free worker slots) are failed so the watcher retries them.
+- **Failed commit retries** use an exponential cooldown (1m, 2m, 4m) instead of a fixed 60s.
+
+---
+
 ## [0.5.0] - 2026-10-31
 
 ### ⚠️ Breaking

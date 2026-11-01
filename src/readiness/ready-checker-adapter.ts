@@ -181,6 +181,37 @@ export class ReadyCheckerAdapter {
     }
   }
 
+  /**
+   * Single health probe (no retry loop), evaluated with the configured mode.
+   * Used by the self-repair watchdog to detect a running but unresponsive service.
+   */
+  public async probe(
+    readyConfig: NormalizedDeployraConfig['deploy']['ready'],
+  ): Promise<{ healthy: boolean; checks: SingleCheckResult[] }> {
+    const { intervalMs, mode, checks } = readyConfig;
+    if (!checks || checks.length === 0) {
+      return { healthy: true, checks: [] };
+    }
+    const checkTimeoutMs = Math.max(intervalMs, 2000);
+
+    if (mode === 'sequence') {
+      const results: SingleCheckResult[] = [];
+      for (const check of checks) {
+        const res = await this.executeCheck(check, checkTimeoutMs);
+        results.push(res);
+        if (!res.success) return { healthy: false, checks: results };
+      }
+      return { healthy: true, checks: results };
+    }
+
+    const results = await Promise.all(
+      checks.map((check) => this.executeCheck(check, checkTimeoutMs)),
+    );
+    const healthy =
+      mode === 'any' ? results.some((c) => c.success) : results.every((c) => c.success);
+    return { healthy, checks: results };
+  }
+
   public async wait(
     readyConfig: NormalizedDeployraConfig['deploy']['ready'],
   ): Promise<ReadyCheckResult> {

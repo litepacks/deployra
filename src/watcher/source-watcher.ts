@@ -331,8 +331,9 @@ export class SourceWatcher {
           // If latest deployment failed/rolled back, attempt self-repair retry after cooldown (up to 3 retries)
           if (['failed', 'rolled_back', 'rollback_failed'].includes(latestDep.status)) {
             const depCompletedAt = latestDep.completedAt || latestDep.createdAt;
-            const cooldownMs = 60000; // 60s cooldown between retries of failed commit
             const failedCount = this.countRecentFailedAttempts(projectName, remoteSha);
+            // Exponential cooldown between retries of a failed commit: 1m, 2m, 4m
+            const cooldownMs = 60000 * 2 ** Math.max(0, failedCount - 1);
 
             if (failedCount >= 3) {
               // Max auto-retries reached for this failed commit

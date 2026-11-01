@@ -19,12 +19,28 @@ When a deployment starts, Deployra writes a lock record to `project_locks`. If t
 - Locks held by dead or non-running deployment IDs are evicted automatically.
 - Prevents deployment deadlocks following machine restarts.
 
-### 2. Timed-Out Deployment Recovery
-If a custom build command hangs indefinitely, Deployra marks stale deployments as `failed` after their timeout expires and terminates any lingering subprocesses.
+### 2. Orphaned & Stuck Deployment Recovery
+- Deployments still marked `running` after 15 minutes that **no live worker owns** (the process died) are marked `failed`. A long build the worker is still executing is never touched.
+- Deployments stuck in `queued` for 15 minutes while the worker has free slots are marked `failed`; the watcher then retries the commit.
+- Overlapping watchdog cycles are prevented, so a slow recovery never runs twice in parallel.
 
-### 3. Service Liveness Auto-Healing
-For registered services managed by Unitup or systemd, the Watchdog checks runtime status:
-- If a service has crashed (`inactive` or `failed`) and no active deployment is currently in progress, Deployra triggers an automated recovery restart.
+### 3. Service Auto-Healing
+For every project with at least one successful deployment and no deployment in progress, the Watchdog checks the service:
+- **Down** (`inactive` / `failed`): the existing systemd unit is started again *without re-registering it*, so zero-downtime units stay in supervisor mode and keep their env. Units stuck in systemd's start-limit `failed` state are reset first. For zero-downtime services Deployra waits for the supervisor IPC socket.
+- **Unresponsive**: when `deploy.ready` checks exist, each cycle runs one health probe. After `healthFailureThreshold` consecutive failures the service is restarted.
+- **Verification**: a recovery only counts once the ready checks pass (or the unit is active when no checks are configured).
+- **Backoff & limit**: failed recoveries are retried after 30s, 1m, 2m, … (max 15m). After `maxRestarts` consecutive failures Deployra stops, logs an error and sends one `failure` notification. A healthy service or a new successful deployment resets the counter.
+
+```yaml
+selfRepair:
+  enabled: true              # restart crashed services (default true)
+  healthCheck: true          # also restart when deploy.ready checks keep failing
+  healthFailureThreshold: 3  # consecutive failed probes before a restart
+  maxRestarts: 5             # consecutive failed recoveries before giving up and alerting
+```
+
+### 3b. Failed Commit Retries
+When a deployment of the latest commit fails, the watcher retries it up to 3 times with an exponential cooldown (1m, 2m, 4m).
 
 ### 4. Auto-Retention Pruning
 Archived deployments, step logs, and old release folders are kept within healthy limits (`keepCount: 100`, `maxAgeDays: 30`) to prevent disk bloat.

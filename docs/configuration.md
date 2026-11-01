@@ -48,6 +48,9 @@ deploy:
     enabled: false              # Default canary state
     weight: 10%                 # Initial traffic split percentage
 
+  # (top-level, next to deploy:) see Self-Repair docs
+  # selfRepair: { enabled: true, healthCheck: true, healthFailureThreshold: 3, maxRestarts: 5 }
+
   # Lifecycle execution commands
   commands:
     install:

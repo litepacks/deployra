@@ -27,7 +27,17 @@ export interface DeploymentJobPayload {
 export interface WorkmaticEngineOptions {
   concurrency?: number;
   dbPath?: string;
+  /** How long a claimed job is owned before workmatic hands it to another slot. */
+  leaseMs?: number;
 }
+
+/**
+ * Workmatic never renews a lease: once it expires the job is claimed again while the
+ * first run is still going. Deployments routinely take minutes (install, build, retries,
+ * ready checks), so the lease must outlive any deployment. Crash recovery does not rely
+ * on lease expiry: unfinished deployments are failed on daemon startup.
+ */
+export const DEFAULT_JOB_LEASE_MS = 6 * 60 * 60 * 1000;
 
 export class WorkmaticEngine {
   private client: WorkmaticClient;
@@ -36,6 +46,7 @@ export class WorkmaticEngine {
   private runner: DeploymentPipelineRunner | null = null;
   private db: ReturnType<typeof createDatabase>;
   private concurrency: number;
+  private leaseMs: number;
   private projectExecutionChains = new Map<string, Promise<void>>();
 
   constructor(options?: WorkmaticEngineOptions) {
@@ -59,6 +70,13 @@ export class WorkmaticEngine {
       : undefined;
     const resolvedConcurrency = options?.concurrency ?? parsedEnvConcurrency ?? 4;
     this.concurrency = Math.max(1, Number.isFinite(resolvedConcurrency) ? resolvedConcurrency : 4);
+
+    const parsedEnvLease = process.env.DEPLOYRA_JOB_LEASE_MS
+      ? Number.parseInt(process.env.DEPLOYRA_JOB_LEASE_MS, 10)
+      : undefined;
+    const resolvedLease = options?.leaseMs ?? parsedEnvLease ?? DEFAULT_JOB_LEASE_MS;
+    this.leaseMs =
+      Number.isFinite(resolvedLease) && resolvedLease > 0 ? resolvedLease : DEFAULT_JOB_LEASE_MS;
 
     this.db = createDatabase({ filename: dbPath });
     this.client = createClient({ db: this.db, queue: 'deployra.deploy' });
@@ -94,10 +112,21 @@ export class WorkmaticEngine {
       queue: 'deployra.deploy',
       concurrency: this.concurrency,
       timeoutMs: 0,
+      leaseMs: this.leaseMs,
     });
 
     this.worker.process(async (job: Job<DeploymentJobPayload>) => {
       const payload = job.payload;
+
+      // A re-delivered job (expired lease, duplicate claim) must not take a worker slot
+      // waiting behind its own first run in the project chain.
+      if (this.runningDeployments.has(payload.deploymentId)) {
+        logger.warn(
+          `Ignoring duplicate delivery of deployment job #${payload.deploymentId}; it is already running.`,
+          { project: payload.projectName, deploymentId: payload.deploymentId },
+        );
+        return;
+      }
       this.runningDeployments.add(payload.deploymentId);
       logger.info(
         `Workmatic processing deployment job for project '${payload.projectName}' (target SHA: ${payload.targetSha})`,
@@ -109,21 +138,28 @@ export class WorkmaticEngine {
 
       if (!this.runner) {
         logger.error('Pipeline runner is not configured in WorkmaticEngine');
+        this.deploymentRepo.updateStatus(
+          payload.deploymentId,
+          'failed',
+          'Pipeline runner is not configured in the job worker',
+        );
         this.runningDeployments.delete(payload.deploymentId);
         return;
       }
 
       await this.runForProject(payload.projectName, async () => {
-        // Check if deployment was cancelled while waiting in the project queue
+        // Only queued deployments run: cancelled while waiting, or already run/failed by an
+        // earlier delivery of the same job (never re-run a finished deployment)
         const status = this.deploymentRepo.getDeploymentStatus(payload.deploymentId);
-        if (status === 'cancelled') {
+        if (status !== 'queued') {
           logger.info(
-            `Skipping cancelled deployment job #${payload.deploymentId} for project '${payload.projectName}'`,
+            `Skipping ${status ?? 'unknown'} deployment job #${payload.deploymentId} for project '${payload.projectName}'`,
             {
               project: payload.projectName,
               deploymentId: payload.deploymentId,
             },
           );
+          this.runningDeployments.delete(payload.deploymentId);
           return;
         }
 

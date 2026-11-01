@@ -236,6 +236,14 @@ export const deployraConfigSchema = z.object({
     })
     .optional(),
   notifications: notificationsConfigSchema.optional(),
+  selfRepair: z
+    .object({
+      enabled: z.boolean().default(true),
+      healthCheck: z.boolean().default(true),
+      healthFailureThreshold: z.number().int().min(1).default(3),
+      maxRestarts: z.number().int().min(1).default(5),
+    })
+    .default({}),
   environments: z.record(z.string(), z.any()).optional(),
 });
 
@@ -467,6 +475,12 @@ export function normalizeAndValidateConfig(rawConfig: unknown): NormalizedDeploy
     },
     webhook: webhookConfig,
     notifications: normalizedNotifications,
+    selfRepair: {
+      enabled: data.selfRepair.enabled,
+      healthCheck: data.selfRepair.healthCheck,
+      healthFailureThreshold: data.selfRepair.healthFailureThreshold,
+      maxRestarts: data.selfRepair.maxRestarts,
+    },
     deploy: {
       strategy: data.deploy.strategy,
       workspacePath: resolvedWorkspacePath,

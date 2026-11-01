@@ -493,16 +493,50 @@ export class DeploymentRepository {
     return result.changes;
   }
 
-  cleanupStaleJobs(maxAgeMs = 15 * 60 * 1000): number {
-    const db = getDatabase();
+  /**
+   * Fails running deployments older than maxAgeMs that no live worker owns (lost when a
+   * process died). Deployments the current worker is still executing are left alone.
+   */
+  cleanupStaleJobs(maxAgeMs = 15 * 60 * 1000, activeIds: Iterable<string> = []): number {
     const cutoff = Date.now() - maxAgeMs;
-    const stmt = db.prepare(`
-      UPDATE deployments 
-      SET status = 'failed', completed_at = ?, error = 'Deployment timed out or process was restarted unexpectedly' 
+    const candidates = getPreparedStatement(`
+      SELECT id FROM deployments
       WHERE status IN ('running', 'rolling_back') AND (started_at < ? OR (started_at IS NULL AND created_at < ?))
-    `);
-    const result = stmt.run(Date.now(), cutoff, cutoff);
-    return result.changes;
+    `).all(cutoff, cutoff) as Array<{ id: string }>;
+    return this.failDeployments(
+      candidates.map((r) => r.id),
+      activeIds,
+      'Deployment timed out or process was restarted unexpectedly',
+    );
+  }
+
+  /**
+   * Fails queued deployments the job worker never picked up within maxAgeMs.
+   */
+  failStaleQueuedDeployments(maxAgeMs: number, activeIds: Iterable<string> = []): number {
+    const cutoff = Date.now() - maxAgeMs;
+    const candidates = getPreparedStatement(
+      `SELECT id FROM deployments WHERE status = 'queued' AND created_at < ?`,
+    ).all(cutoff) as Array<{ id: string }>;
+    return this.failDeployments(
+      candidates.map((r) => r.id),
+      activeIds,
+      'Deployment was never picked up by the job worker',
+    );
+  }
+
+  private failDeployments(ids: string[], activeIds: Iterable<string>, reason: string): number {
+    const active = new Set(activeIds);
+    const toFail = ids.filter((id) => !active.has(id));
+    if (toFail.length === 0) return 0;
+    const now = Date.now();
+    const stmt = getPreparedStatement(
+      `UPDATE deployments SET status = 'failed', completed_at = ?, error = ? WHERE id = ?`,
+    );
+    getDatabase().transaction(() => {
+      for (const id of toFail) stmt.run(now, reason, id);
+    })();
+    return toFail.length;
   }
 
   public pruneDeployments(options: {

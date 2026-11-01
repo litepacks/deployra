@@ -129,6 +129,20 @@ export interface WatchConfig {
   interval?: string | number; // Default '30s'
 }
 
+export interface SelfRepairConfig {
+  enabled?: boolean; // Restart the service when it is down (default true)
+  healthCheck?: boolean; // Also restart when deploy.ready checks keep failing (default true)
+  healthFailureThreshold?: number; // Consecutive failed health probes before a restart (default 3)
+  maxRestarts?: number; // Consecutive failed recoveries before giving up and alerting (default 5)
+}
+
+export interface NormalizedSelfRepairConfig {
+  enabled: boolean;
+  healthCheck: boolean;
+  healthFailureThreshold: number;
+  maxRestarts: number;
+}
+
 export interface WebhookConfig {
   enabled?: boolean;
   secret?: string;
@@ -176,6 +190,7 @@ export interface DeployraConfig {
   deploy?: DeployConfig;
   webhook?: WebhookConfig;
   notifications?: NotificationsConfig;
+  selfRepair?: SelfRepairConfig;
   environments?: Record<string, any>;
 }
 
@@ -204,6 +219,7 @@ export interface NormalizedDeployraConfig {
     allowUnsigned: boolean;
   };
   notifications: NormalizedNotificationChannel[];
+  selfRepair: NormalizedSelfRepairConfig;
   deploy: {
     strategy: DeployStrategy;
     workspacePath: string;
